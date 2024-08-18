@@ -10,4 +10,5 @@ usage:
 3. prompt for CLIP first, tags
 4. enter word **SPLIT**, use surrounding whitespace/newline as you like
 5. prompt for T5, natural language
+6. Generate
 
