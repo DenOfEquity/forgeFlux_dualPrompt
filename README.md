@@ -24,4 +24,4 @@ update 1:
 * for explanation of these egregious errors, see line 2 of this document.
 
 update 2:
-* added control for Shift parameter (affects calculation of sigmas used to guide denoising per step)
+* added control for Shift parameter (affects calculation of sigmas used to guide denoising per step). This is for the *Simple* scheduler only.

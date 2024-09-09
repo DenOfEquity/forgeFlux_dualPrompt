@@ -131,7 +131,7 @@ class forgeMultiPrompt(scripts.Script):
         with InputAccordion(False, label=self.title()) as enabled:
             info = gradio.Markdown(show_label=False, value='separator keyword: **SPLIT**')
             with gradio.Row():
-                shift = gradio.Slider(label='Shift', info='Flux only. Defaults are dev: 1.15; schnell: 1.00. Set to 0.0 to use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                shift = gradio.Slider(label='Shift (Simple scheduler)', info='Flux only. Defaults are dev: 1.15; schnell: 1.00. Set to 0.0 to use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
                 dynamic = gradio.Checkbox(label='Dynamic Shift', value=False, scale=0);
         
         self.infotext_fields = [
