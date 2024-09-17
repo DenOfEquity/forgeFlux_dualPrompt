@@ -25,3 +25,4 @@ update 1:
 
 update 2:
 * added control for Shift parameter (affects calculation of sigmas used to guide denoising per step). This is for the *Simple* scheduler only.
+* Dynamic Shift is a different method of calculating the way Shift affects sigmas. From brief testing, it seems to work very badly with higher Shift values, but may be better at low values. It's the way Forge calculates, so included for completeness / reproducibility. Dynamic Shift is the term *diffusers* uses.
