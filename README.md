@@ -6,7 +6,7 @@ install:
 **Extensions** tab, **Install from URL**, use URL for this repo
 
 usage:
-1. Enable the extension: **Multi-prompt** -> **Enabled** checkbox
+1. Enable the extension
 2. use the Prompt textbox as normal
 3. prompt for first text encoder
 4. enter word **SPLIT**, use surrounding whitespace/newline as you like
@@ -25,4 +25,9 @@ update 1:
 
 update 2:
 * added control for Shift parameter (affects calculation of sigmas used to guide denoising per step). This is for the *Simple* scheduler only.
-* Dynamic Shift is a different method of calculating the way Shift affects sigmas. From brief testing, it seems to work very badly with higher Shift values, but may be better at low values. It's the way Forge calculates, so included for completeness / reproducibility. Dynamic Shift is the term *diffusers* uses.
+* Dynamic Shift is a different method of calculating the way Shift affects sigmas. From brief testing, it seems to work very badly with higher Shift values, but may be better at low values. It's the way Forge calculates, so included for completeness / reproducibility. Dynamic Shift is the term diffusers uses.
+
+update 3:
+* changed to base/max shift implementation. Max Shift > 0.0 means using the dynamic method.
+* added separate controlsfor HighRes fix. Leave at 0 to use same values as non-HR.
+* added automatic backup/restore of original sigmas, as this overwrites (so previously disabling extension left the last used settings in place)

@@ -12,6 +12,7 @@ class forgeMultiPrompt(scripts.Script):
     glc_backup_flux = None
     glc_backup_sdxl = None
     clearConds = False
+    sigmasBackup = None
 
     def __init__(self):
         if forgeMultiPrompt.glc_backup_flux is None:
@@ -121,7 +122,7 @@ class forgeMultiPrompt(scripts.Script):
         return cond
 
     def title(self):
-        return "Multi-prompt // for Flux and sdXL"
+        return "Multi-prompt (SDXL, Flux)"
 
     def show(self, is_img2img):
         # make this extension visible in both txt2img and img2img tab.
@@ -129,15 +130,21 @@ class forgeMultiPrompt(scripts.Script):
 
     def ui(self, *args, **kwargs):
         with InputAccordion(False, label=self.title()) as enabled:
-            info = gradio.Markdown(show_label=False, value='separator keyword: **SPLIT**')
+            info1 = gradio.Markdown(show_label=False, value='### multi-prompt separator keyword: **SPLIT** ###')
+            info2 = gradio.Markdown(show_label=False, value='#### Shift control for Flux, Simple scheduler only. ####')
             with gradio.Row():
-                shift = gradio.Slider(label='Shift (Simple scheduler)', info='Flux only. Defaults are dev: 1.15; schnell: 1.00. Set to 0.0 to use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
-                dynamic = gradio.Checkbox(label='Dynamic Shift', value=False, scale=0);
+                shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                max = gradio.Slider(label='Max Shift - 0: non-dynamic', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+            with gradio.Row():
+                shiftHR = gradio.Slider(label='HighRes Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                maxHR = gradio.Slider(label='HighRes Max Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
         
         self.infotext_fields = [
             (enabled, lambda d: d.get("fmp_enabled", False)),
             (shift,   "fmp_shift"),
-            (dynamic, "fmp_dynamic"),
+            (max,     "fmp_max"),
+            (shiftHR, "fmp_shiftHR"),
+            (maxHR,   "fmp_maxHR"),
         ]
 
         def clearCondCache ():
@@ -145,48 +152,71 @@ class forgeMultiPrompt(scripts.Script):
 
         enabled.change (fn=clearCondCache, inputs=[], outputs=[])
 
-        return enabled, shift, dynamic
+        return enabled, shift, max, shiftHR, maxHR
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, dynamic = script_args
+        enabled, shift, max, shiftHR, maxHR = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
             params.clear_prompt_cache()
             forgeMultiPrompt.clearConds = False
 
-        if enabled:
-            isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
-
-            if not shared.sd_model.is_webui_legacy_model() and shift > 0.0:
-                def sigma (timestep):
-                    if dynamic:
-                        return math.exp(shift) / (math.exp(shift) + (1 / timestep - 1) ** 1.0)
-                    else:
-                        return shift * timestep / (1 + (shift - 1) * timestep)
-
-                ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000))
-                shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
-
+        isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
+        if enabled and isMPModel:
             params.extra_generation_params.update({
                 "fmp_enabled"        :   enabled,
                 "fmp_shift"          :   shift,
-                "fmp_dynamic"        :   dynamic,
+                "fmp_max"            :   max,
+                "fmp_shiftHR"        :   shiftHR,
+                "fmp_maxHR"          :   maxHR,
             })
-            if isMPModel:
-                if params.sd_model.is_sdxl == True:
-                    StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
-                else:
-                    Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
+            if params.sd_model.is_sdxl == True:
+                StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
+            else:
+                Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
 
         return
 
+    def process_before_every_sampling(self, params, *script_args, **kwargs):
+        enabled, shift, max, shiftHR, maxHR = script_args
+        if enabled and not shared.sd_model.is_webui_legacy_model():
+            if self.sigmasBackup == None:
+                self.sigmasBackup = shared.sd_model.forge_objects.unet.model.predictor.sigmas
+            
+            def sigma (timestep, s, d):
+                if d > 0.0:
+                    m = (d - shift) / (4096 - 256)
+                    b = shift - m * 256
+                    mu = 16 * m + b
+
+                    return math.exp(mu) / (math.exp(mu) + (1 / timestep - 1) ** 1.0)
+                else:
+                    return s * timestep / (1 + (s - 1) * timestep)
+            
+            if params.is_hr_pass:
+                thisShift = shiftHR if shiftHR > 0.0 else shift
+                dynamic = maxHR if maxHR > 0.0 else max
+            else:
+                thisShift = shift
+                dynamic = max
+
+            if thisShift > 0.0:
+                ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
+                shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
+
+
     def postprocess(self, params, processed, *args):
         enabled = args[0]
-        if enabled:
+        isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
+        if enabled and isMPModel:
             if params.sd_model.is_sdxl == True:
                 StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.glc_backup_sdxl
             else:
                 Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
+
+            if self.sigmasBackup != None:
+                shared.sd_model.forge_objects.unet.model.predictor.sigmas = self.sigmasBackup
+                self.sigmasBackup = None
 
         return
