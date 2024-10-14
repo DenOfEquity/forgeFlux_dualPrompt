@@ -31,3 +31,6 @@ update 3:
 * changed to base/max shift implementation. Max Shift > 0.0 means using the dynamic method.
 * added separate controlsfor HighRes fix. Leave at 0 to use same values as non-HR.
 * added automatic backup/restore of original sigmas, as this overwrites (so previously disabling extension left the last used settings in place)
+
+update 4:
+* added control over model prediction type. Particularly (only?) relevant for sd1.5 v-prediction models. Renamed to 'Forge2 extras'.
