@@ -132,7 +132,7 @@ class forgeMultiPrompt(scripts.Script):
     def ui(self, *args, **kwargs):
         with InputAccordion(False, label=self.title()) as enabled:
             with gradio.Row():
-                _ = gradio.Markdown(show_label=False, value='### multi-prompt separator keyword: **SPLIT** ###')
+                _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, Flux) separator keyword: **SPLIT** ###')
                 prediction_type = gradio.Dropdown(label='Set model prediction type', choices=['default', 'epsilon', 'const', 'v_prediction', 'edm'], value='default', type='value')
 
             _ = gradio.Markdown(show_label=False, value='#### Shift control for Flux, Simple scheduler only. ####')
