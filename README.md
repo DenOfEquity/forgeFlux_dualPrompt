@@ -33,4 +33,7 @@ update 3:
 * added automatic backup/restore of original sigmas, as this overwrites (so previously disabling extension left the last used settings in place)
 
 update 4:
-* added control over model prediction type. Particularly (only?) relevant for sd1.5 v-prediction models. Renamed to 'Forge2 extras'.
+* added control over model prediction type. Particularly (only?) relevant for v-prediction models. Renamed to 'Forge2 extras'.
+
+update 5:
+* added option to disable individual text encoders. Different results to sending an empty prompt.

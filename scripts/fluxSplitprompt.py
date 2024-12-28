@@ -4,7 +4,12 @@ from backend.diffusion_engine.sdxl import StableDiffusionXL
 import gradio
 import torch, math
 from modules import scripts, shared
-from modules.ui_components import InputAccordion
+from modules.ui_components import InputAccordion, ToolButton
+
+
+import gc
+from backend import memory_management
+from modules_forge import main_entry
 
 
 class forgeMultiPrompt(scripts.Script):
@@ -14,6 +19,10 @@ class forgeMultiPrompt(scripts.Script):
     clearConds = False
     sigmasBackup = None
     prediction_typeBackup = None
+    flux_use_T5 = True
+    flux_use_CL = True
+    SDXL_use_CL = True
+    SDXL_use_CG = True
 
     def __init__(self):
         if forgeMultiPrompt.glc_backup_flux is None:
@@ -57,8 +66,15 @@ class forgeMultiPrompt(scripts.Script):
         #   make 2 prompt lists, split each prompt in original list based on 'SPLIT'
         CLIPprompt, T5prompt = forgeMultiPrompt.splitPrompt (prompt, 2)
 
-        cond_l, pooled_l = self.text_processing_engine_l(CLIPprompt)
-        cond_t5 = self.text_processing_engine_t5(T5prompt)
+        if forgeMultiPrompt.flux_use_CL:
+            cond_l, pooled_l = self.text_processing_engine_l(CLIPprompt)
+        else:
+            pooled_l = torch.zeros([len(prompt), 768])
+            
+        if forgeMultiPrompt.flux_use_T5:
+            cond_t5 = self.text_processing_engine_t5(prompt)
+        else:
+            cond_t5 = torch.zeros([len(prompt), 256, 4096])
         cond = dict(crossattn=cond_t5, vector=pooled_l)
 
         if self.use_distilled_cfg_scale:
@@ -78,8 +94,16 @@ class forgeMultiPrompt(scripts.Script):
         #   make 2 prompt lists, split each prompt in original list based on 'SPLIT'
         CLIPLprompt, CLIPGprompt = forgeMultiPrompt.splitPrompt (prompt, 2)
         
-        cond_l = self.text_processing_engine_l(CLIPLprompt)
-        cond_g, clip_pooled = self.text_processing_engine_g(CLIPGprompt)
+        if forgeMultiPrompt.SDXL_use_CL:
+            cond_l = self.text_processing_engine_l(CLIPLprompt)
+        else:
+            cond_l = torch.zeros([len(prompt), 77, 768])
+            
+        if forgeMultiPrompt.SDXL_use_CG:
+            cond_g, clip_pooled = self.text_processing_engine_g(CLIPGprompt)
+        else:
+            cond_g = torch.zeros([len(prompt), 77, 1280])
+            clip_pooled = torch.zeros([len(prompt), 1280])
 
         #   conds get concatenated later, so sizes of dimension 1 must match
         #   padding with zero
@@ -135,6 +159,13 @@ class forgeMultiPrompt(scripts.Script):
                 _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, Flux) separator keyword: **SPLIT** ###')
                 prediction_type = gradio.Dropdown(label='Set model prediction type', choices=['default', 'epsilon', 'const', 'v_prediction', 'edm'], value='default', type='value')
 
+            with gradio.Row():
+                flux_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.flux_use_T5, label="Flux: use T5")
+                flux_use_CL = gradio.Checkbox(value=forgeMultiPrompt.flux_use_CL, label="Flux: use CLIP (pooled)")
+            with gradio.Row():
+                SDXL_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CL, label="SDXL: use CLIP-L")
+                SDXL_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CG, label="SDXL: use CLIP-G")
+
             _ = gradio.Markdown(show_label=False, value='#### Shift control for Flux, Simple scheduler only. ####')
             with gradio.Row():
                 shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
@@ -143,7 +174,6 @@ class forgeMultiPrompt(scripts.Script):
                 shiftHR = gradio.Slider(label='HighRes Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
                 maxHR = gradio.Slider(label='HighRes Max Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
 
-
         self.infotext_fields = [
             (enabled, lambda d: d.get("fmp_enabled", False)),
             (shift,           "fmp_shift"),
@@ -151,17 +181,25 @@ class forgeMultiPrompt(scripts.Script):
             (shiftHR,         "fmp_shiftHR"),
             (maxHR,           "fmp_maxHR"),
             (prediction_type, "fmp_prediction"),
+            (flux_use_T5,     "fmp_fluxT5"),
+            (flux_use_CL,     "fmp_fluxCL"),
+            (SDXL_use_CL,     "fmp_sdxlCL"),
+            (SDXL_use_CG,     "fmp_sdxlCG"),
         ]
 
         def clearCondCache ():
-            forgeMultiPrompt.clearConds ^= True      #   if False, set to True; if True then next Generate hasn't happened so safe to reset to False
+            forgeMultiPrompt.clearConds = True
 
-        enabled.change (fn=clearCondCache, inputs=[], outputs=[])
+        enabled.change     (fn=clearCondCache, inputs=[], outputs=[])
+        flux_use_T5.change (fn=clearCondCache, inputs=[], outputs=[])
+        flux_use_CL.change (fn=clearCondCache, inputs=[], outputs=[])
+        SDXL_use_CL.change (fn=clearCondCache, inputs=[], outputs=[])
+        SDXL_use_CG.change (fn=clearCondCache, inputs=[], outputs=[])
 
-        return enabled, shift, max, shiftHR, maxHR, prediction_type
+        return enabled, shift, max, shiftHR, maxHR, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, prediction_type = script_args
+        enabled, shift, max, shiftHR, maxHR, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -169,25 +207,36 @@ class forgeMultiPrompt(scripts.Script):
             forgeMultiPrompt.clearConds = False
 
         if enabled:
+            forgeMultiPrompt.flux_use_T5 = flux_use_T5
+            forgeMultiPrompt.flux_use_CL = flux_use_CL
+            forgeMultiPrompt.SDXL_use_CL = SDXL_use_CL
+            forgeMultiPrompt.SDXL_use_CG = SDXL_use_CG
+            
             params.extra_generation_params.update({
-                "fmp_enabled"        :   enabled,
+                "fmp_enabled"   :   enabled,
             })
             
             isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
             if isMPModel:
-                params.extra_generation_params.update({
-                    "fmp_shift"          :   shift,
-                    "fmp_max"            :   max,
-                    "fmp_shiftHR"        :   shiftHR,
-                    "fmp_maxHR"          :   maxHR,
-                })
                 if params.sd_model.is_sdxl == True:
                     StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
+                    params.extra_generation_params.update({
+                        "fmp_sdxlCL"    :   SDXL_use_CL,
+                        "fmp_sdxlCG"    :   SDXL_use_CG,
+                    })
                 else:
                     Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
+                    params.extra_generation_params.update({
+                        "fmp_shift"     :   shift,
+                        "fmp_max"       :   max,
+                        "fmp_shiftHR"   :   shiftHR,
+                        "fmp_maxHR"     :   maxHR,
+                        "fmp_fluxT5"    :   flux_use_T5,
+                        "fmp_fluxCL"    :   flux_use_CL,
+                    })
 
             if prediction_type != 'default':
-                self.prediction_typeBackup = params.sd_model.forge_objects.unet.model.predictor.prediction_type
+                forgeMultiPrompt.prediction_typeBackup = params.sd_model.forge_objects.unet.model.predictor.prediction_type
                 params.sd_model.forge_objects.unet.model.predictor.prediction_type = prediction_type
 
                 params.extra_generation_params.update({
@@ -198,30 +247,30 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, _ = script_args
-        if enabled and not shared.sd_model.is_webui_legacy_model():
-            self.sigmasBackup = shared.sd_model.forge_objects.unet.model.predictor.sigmas
-            
-            def sigma (timestep, s, d):
-                if d > 0.0:
-                    m = (d - shift) / (4096 - 256)
-                    b = shift - m * 256
-                    mu = 16 * m + b
+        enabled, shift, max, shiftHR, maxHR, _, _, _, _, _ = script_args
+        if enabled:
+            if not shared.sd_model.is_webui_legacy_model():
+                def sigma (timestep, s, d):
+                    if d > 0.0:
+                        m = (d - shift) / (4096 - 256)
+                        b = shift - m * 256
+                        mu = 16 * m + b
 
-                    return math.exp(mu) / (math.exp(mu) + (1 / timestep - 1) ** 1.0)
+                        return math.exp(mu) / (math.exp(mu) + (1 / timestep - 1) ** 1.0)
+                    else:
+                        return s * timestep / (1 + (s - 1) * timestep)
+
+                if params.is_hr_pass:
+                    thisShift = shiftHR if shiftHR > 0.0 else shift
+                    dynamic = maxHR if maxHR > 0.0 else max
                 else:
-                    return s * timestep / (1 + (s - 1) * timestep)
-            
-            if params.is_hr_pass:
-                thisShift = shiftHR if shiftHR > 0.0 else shift
-                dynamic = maxHR if maxHR > 0.0 else max
-            else:
-                thisShift = shift
-                dynamic = max
+                    thisShift = shift
+                    dynamic = max
 
-            if thisShift > 0.0:
-                ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
-                shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
+                if thisShift > 0.0:
+                    forgeMultiPrompt.sigmasBackup = shared.sd_model.forge_objects.unet.model.predictor.sigmas
+                    ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
+                    shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
 
 
     def postprocess(self, params, processed, *args):
@@ -234,12 +283,12 @@ class forgeMultiPrompt(scripts.Script):
                 else:
                     Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
 
-            if self.sigmasBackup != None:
-                shared.sd_model.forge_objects.unet.model.predictor.sigmas = self.sigmasBackup
-                self.sigmasBackup = None
+            if forgeMultiPrompt.sigmasBackup != None:
+                shared.sd_model.forge_objects.unet.model.predictor.sigmas = forgeMultiPrompt.sigmasBackup
+                forgeMultiPrompt.sigmasBackup = None
 
-            if self.prediction_typeBackup != None:
-                params.sd_model.forge_objects.unet.model.predictor.prediction_type = self.prediction_typeBackup
-                self.prediction_typeBackup = None
+            if forgeMultiPrompt.prediction_typeBackup != None:
+                params.sd_model.forge_objects.unet.model.predictor.prediction_type = forgeMultiPrompt.prediction_typeBackup
+                forgeMultiPrompt.prediction_typeBackup = None
 
         return
