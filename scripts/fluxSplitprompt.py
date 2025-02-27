@@ -1,6 +1,11 @@
 from backend import memory_management
 from backend.diffusion_engine.flux import Flux
 from backend.diffusion_engine.sdxl import StableDiffusionXL
+try:
+    from backend.diffusion_engine.sd35 import StableDiffusion3
+except:
+    StableDiffusion3 = None
+
 import gradio
 import torch, math
 from modules import scripts, shared
@@ -14,67 +19,148 @@ from modules_forge import main_entry
 
 class forgeMultiPrompt(scripts.Script):
     sorting_priority = 0
+    
     glc_backup_flux = None
     glc_backup_sdxl = None
+    glc_backup_sd3 = None
     clearConds = False
     sigmasBackup = None
     prediction_typeBackup = None
+    text_encoder_device_backup = None
+    
     flux_use_T5 = True
     flux_use_CL = True
     SDXL_use_CL = True
     SDXL_use_CG = True
+    SD3_use_CL = True
+    SD3_use_CG = True
+    SD3_use_T5 = True
 
     def __init__(self):
         if forgeMultiPrompt.glc_backup_flux is None:
             forgeMultiPrompt.glc_backup_flux = Flux.get_learned_conditioning
         if forgeMultiPrompt.glc_backup_sdxl is None:
             forgeMultiPrompt.glc_backup_sdxl = StableDiffusionXL.get_learned_conditioning
+        if forgeMultiPrompt.glc_backup_sd3 is None and StableDiffusion3 is not None:
+            forgeMultiPrompt.glc_backup_sd3 = StableDiffusion3.get_learned_conditioning
+        if forgeMultiPrompt.text_encoder_device_backup is None:
+            forgeMultiPrompt.text_encoder_device_backup = memory_management.text_encoder_device
 
     def splitPrompt (prompt, countTextEncoders):
         promptTE1 = []
         promptTE2 = []
-#        promptTE3 = []
+        promptTE3 = []
 
         for p in prompt:
             splitPrompt = p.split('SPLIT')
             
             countSplits = min (countTextEncoders, len(splitPrompt))
             match countSplits:
-#                case 3:         #   sd3, included for future proofing
-#                    promptTE1.append(splitPrompt[0].strip())
-#                    promptTE2.append(splitPrompt[1].strip())
-#                    promptTE3.append(splitPrompt[2].strip())
+                case 3:         #   sd3
+                    promptTE1.append(splitPrompt[0].strip())
+                    promptTE2.append(splitPrompt[1].strip())
+                    promptTE3.append(splitPrompt[2].strip())
                 case 2:         #   sdxl, flux, hunyuan future proofing or SD3 with incomplete SPLITs
                     promptTE1.append(splitPrompt[0].strip())
                     promptTE2.append(splitPrompt[1].strip())
-#                    promptTE3.append(p)
+                    promptTE3.append(p)
                 case 1:         #   sd1,    or Any if SPLIT not used
                     promptTE1.append(p)
                     promptTE2.append(p)
-#                    promptTE3.append(p)
+                    promptTE3.append(p)
                 case _:
                     promptTE1.append(p)
                     promptTE2.append(p)
-#                    promptTE3.append(p)
+                    promptTE3.append(p)
 
-        return promptTE1, promptTE2#, promptTE3
+        return promptTE1, promptTE2, promptTE3
+
+    def patched_text_encoder_gpu2():
+        if torch.cuda.device_count() > 1:
+            return torch.device("cuda:1")
+        else:
+            return torch.cuda.current_device()
+    def patched_text_encoder_gpu():
+        return torch.cuda.current_device()#torch.device("cuda")
+    def patched_text_encoder_cpu():
+        return memory_management.cpu#torch.device("cpu")
+
+
+    @torch.inference_mode()
+    def patched_glc_sd3(self, prompt: list[str]):
+        memory_management.load_model_gpu(self.forge_objects.clip.patcher)
+
+        np = len(prompt)
+
+        CLIPLprompt, CLIPGprompt, T5prompt = forgeMultiPrompt.splitPrompt (prompt, 3)
+
+        is_negative_prompt = getattr(prompt, 'is_negative_prompt', False)
+
+        force_zero_negative_prompt = is_negative_prompt and all(x == '' for x in prompt)
+        if force_zero_negative_prompt:
+            l_pooled = torch.zeros([np, 768])
+            g_pooled = torch.zeros([np, 1280])
+            cond_l = torch.zeros([np, 77, 768])
+            cond_g = torch.zeros([np, 77, 1280])
+            cond_t5 = torch.zeros([np, 256, 4096])
+        else:
+            if forgeMultiPrompt.SD3_use_CG:
+                cond_g, g_pooled = self.text_processing_engine_g(CLIPGprompt)
+            else:
+                cond_g = torch.zeros([np, 77, 1280])
+                g_pooled = torch.zeros([np, 1280])
+            
+            if forgeMultiPrompt.SD3_use_CL:
+                cond_l, l_pooled = self.text_processing_engine_l(CLIPLprompt)
+            else:
+                cond_l = torch.zeros([np, 77, 768])
+                l_pooled = torch.zeros([np, 768])
+
+            if forgeMultiPrompt.SD3_use_T5 and shared.opts.sd3_enable_t5:
+                cond_t5 = self.text_processing_engine_t5(T5prompt)
+            else:
+                cond_t5 = torch.zeros([np, 256, 4096])
+
+        #   conds get concatenated later, so sizes of dimension 1 must match
+        #   padding with zero
+        pad = cond_g.size(1) - cond_l.size(1)
+        if pad > 1:
+            padding = (0,0, 0, pad, 0,0)
+            cond_l = torch.nn.functional.pad (cond_l, padding, mode='constant', value=0)
+        elif pad < 1:
+            padding = (0,0, 0, -pad, 0,0)
+            cond_g = torch.nn.functional.pad (cond_g, padding, mode='constant', value=0)
+
+
+        cond_lg = torch.cat([cond_l, cond_g.to(cond_l.device)], dim=-1)
+        cond_lg = torch.nn.functional.pad(cond_lg, (0, 4096 - cond_lg.shape[-1]))
+
+        cond = dict(
+            crossattn=torch.cat([cond_lg, cond_t5.to(cond_l.device)], dim=-2),
+            vector=torch.cat([l_pooled, g_pooled.to(cond_l.device)], dim=-1),
+        )
+
+        return cond
+
 
     @torch.inference_mode()
     def patched_glc_flux(self, prompt: list[str]):
         memory_management.load_model_gpu(self.forge_objects.clip.patcher)
 
+        np = len(prompt)
+
         #   make 2 prompt lists, split each prompt in original list based on 'SPLIT'
-        CLIPprompt, T5prompt = forgeMultiPrompt.splitPrompt (prompt, 2)
+        CLIPprompt, T5prompt, _ = forgeMultiPrompt.splitPrompt (prompt, 2)
 
         if forgeMultiPrompt.flux_use_CL:
             cond_l, pooled_l = self.text_processing_engine_l(CLIPprompt)
         else:
-            pooled_l = torch.zeros([len(prompt), 768])
+            pooled_l = torch.zeros([np, 768])
             
         if forgeMultiPrompt.flux_use_T5:
             cond_t5 = self.text_processing_engine_t5(prompt)
         else:
-            cond_t5 = torch.zeros([len(prompt), 256, 4096])
+            cond_t5 = torch.zeros([np, 256, 4096])
         cond = dict(crossattn=cond_t5, vector=pooled_l)
 
         if self.use_distilled_cfg_scale:
@@ -91,19 +177,21 @@ class forgeMultiPrompt(scripts.Script):
     def patched_glc_sdxl(self, prompt: list[str]):
         memory_management.load_model_gpu(self.forge_objects.clip.patcher)
 
+        np = len(prompt)
+
         #   make 2 prompt lists, split each prompt in original list based on 'SPLIT'
-        CLIPLprompt, CLIPGprompt = forgeMultiPrompt.splitPrompt (prompt, 2)
+        CLIPLprompt, CLIPGprompt, _ = forgeMultiPrompt.splitPrompt (prompt, 2)
         
         if forgeMultiPrompt.SDXL_use_CL:
             cond_l = self.text_processing_engine_l(CLIPLprompt)
         else:
-            cond_l = torch.zeros([len(prompt), 77, 768])
+            cond_l = torch.zeros([np, 77, 768])
             
         if forgeMultiPrompt.SDXL_use_CG:
             cond_g, clip_pooled = self.text_processing_engine_g(CLIPGprompt)
         else:
-            cond_g = torch.zeros([len(prompt), 77, 1280])
-            clip_pooled = torch.zeros([len(prompt), 1280])
+            cond_g = torch.zeros([np, 77, 1280])
+            clip_pooled = torch.zeros([np, 1280])
 
         #   conds get concatenated later, so sizes of dimension 1 must match
         #   padding with zero
@@ -119,8 +207,8 @@ class forgeMultiPrompt(scripts.Script):
         height = getattr(prompt, 'height', 1024) or 1024
         is_negative_prompt = getattr(prompt, 'is_negative_prompt', False)
 
-        crop_w = 0
-        crop_h = 0
+        crop_w = shared.opts.sdxl_crop_left
+        crop_h = shared.opts.sdxl_crop_top
         target_width = width
         target_height = height
 
@@ -140,8 +228,8 @@ class forgeMultiPrompt(scripts.Script):
             cond_g = torch.zeros_like(cond_g)
 
         cond = dict(
-            crossattn=torch.cat([cond_l, cond_g], dim=2),
-            vector=torch.cat([clip_pooled, flat], dim=1),
+            crossattn=torch.cat([cond_l, cond_g.to(cond_l.device)], dim=2),
+            vector=torch.cat([clip_pooled, flat.to(clip_pooled.device)], dim=1),
         )
 
         return cond
@@ -155,10 +243,16 @@ class forgeMultiPrompt(scripts.Script):
 
     def ui(self, *args, **kwargs):
         with InputAccordion(False, label=self.title()) as enabled:
+            _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, Flux) separator keyword: **SPLIT** ###')
+
             with gradio.Row():
-                _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, Flux) separator keyword: **SPLIT** ###')
+                te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default")
                 prediction_type = gradio.Dropdown(label='Set model prediction type', choices=['default', 'epsilon', 'const', 'v_prediction', 'edm'], value='default', type='value')
 
+            with gradio.Row(visible=(StableDiffusion3 is not None)):
+                SD3_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_T5, label="SD3: use T5")
+                SD3_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CL, label="SD3: use CLIP-L")
+                SD3_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CG, label="SD3: use CLIP-G")
             with gradio.Row():
                 flux_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.flux_use_T5, label="Flux: use T5")
                 flux_use_CL = gradio.Checkbox(value=forgeMultiPrompt.flux_use_CL, label="Flux: use CLIP (pooled)")
@@ -166,7 +260,7 @@ class forgeMultiPrompt(scripts.Script):
                 SDXL_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CL, label="SDXL: use CLIP-L")
                 SDXL_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CG, label="SDXL: use CLIP-G")
 
-            _ = gradio.Markdown(show_label=False, value='#### Shift control for Flux, Simple scheduler only. ####')
+            _ = gradio.Markdown(show_label=False, value='#### Shift control for Flux and SD3. ####')
             with gradio.Row():
                 shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
                 max = gradio.Slider(label='Max Shift - 0: non-dynamic', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
@@ -180,26 +274,47 @@ class forgeMultiPrompt(scripts.Script):
             (max,             "fmp_max"),
             (shiftHR,         "fmp_shiftHR"),
             (maxHR,           "fmp_maxHR"),
+            (te_device,       "fmp_te_device"),
             (prediction_type, "fmp_prediction"),
             (flux_use_T5,     "fmp_fluxT5"),
             (flux_use_CL,     "fmp_fluxCL"),
             (SDXL_use_CL,     "fmp_sdxlCL"),
             (SDXL_use_CG,     "fmp_sdxlCG"),
+            (SD3_use_CL,      "fmp_sd3CL"),
+            (SD3_use_CG,      "fmp_sd3CG"),
+            (SD3_use_T5,      "fmp_sd3T5"),
         ]
 
         def clearCondCache ():
             forgeMultiPrompt.clearConds = True
 
-        enabled.change     (fn=clearCondCache, inputs=[], outputs=[])
-        flux_use_T5.change (fn=clearCondCache, inputs=[], outputs=[])
-        flux_use_CL.change (fn=clearCondCache, inputs=[], outputs=[])
-        SDXL_use_CL.change (fn=clearCondCache, inputs=[], outputs=[])
-        SDXL_use_CG.change (fn=clearCondCache, inputs=[], outputs=[])
+        enabled.change     (fn=clearCondCache, inputs=None, outputs=None)
+        flux_use_T5.change (fn=clearCondCache, inputs=None, outputs=None)
+        flux_use_CL.change (fn=clearCondCache, inputs=None, outputs=None)
+        SDXL_use_CL.change (fn=clearCondCache, inputs=None, outputs=None)
+        SDXL_use_CG.change (fn=clearCondCache, inputs=None, outputs=None)
+        SD3_use_CL.change  (fn=clearCondCache, inputs=None, outputs=None)
+        SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
+        SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
 
-        return enabled, shift, max, shiftHR, maxHR, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG
+        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5
+
+    def after_extra_networks_activate(self, p, *script_args, **kwargs):
+        enabled = script_args[0]
+        if enabled:
+            te_device = script_args[5]
+            match te_device:
+                case "gpu-2":
+                    memory_management.text_encoder_device = forgeMultiPrompt.patched_text_encoder_gpu2
+                case "gpu":
+                    memory_management.text_encoder_device = forgeMultiPrompt.patched_text_encoder_gpu
+                case "cpu":
+                    memory_management.text_encoder_device = forgeMultiPrompt.patched_text_encoder_cpu
+                case _:
+                    pass
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5 = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -211,9 +326,13 @@ class forgeMultiPrompt(scripts.Script):
             forgeMultiPrompt.flux_use_CL = flux_use_CL
             forgeMultiPrompt.SDXL_use_CL = SDXL_use_CL
             forgeMultiPrompt.SDXL_use_CG = SDXL_use_CG
+            forgeMultiPrompt.SD3_use_CL  = SD3_use_CL
+            forgeMultiPrompt.SD3_use_CG  = SD3_use_CG
+            forgeMultiPrompt.SD3_use_T5  = SD3_use_T5
             
             params.extra_generation_params.update({
                 "fmp_enabled"   :   enabled,
+                "fmp_te_device" :   te_device,
             })
             
             isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
@@ -223,6 +342,13 @@ class forgeMultiPrompt(scripts.Script):
                     params.extra_generation_params.update({
                         "fmp_sdxlCL"    :   SDXL_use_CL,
                         "fmp_sdxlCG"    :   SDXL_use_CG,
+                    })
+                elif params.sd_model.is_sd3 == True:
+                    StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.patched_glc_sd3
+                    params.extra_generation_params.update({
+                        "fmp_sd3CL"    :   SD3_use_CL,
+                        "fmp_sd3CG"    :   SD3_use_CG,
+                        "fmp_sd3T5"    :   SD3_use_T5,
                     })
                 else:
                     Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
@@ -247,9 +373,16 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, _, _, _, _, _ = script_args
+        enabled, shift, max, shiftHR, maxHR = script_args[:5]
         if enabled:
-            if not shared.sd_model.is_webui_legacy_model():
+            # print (shared.sd_model.model_config.unet_config)
+
+            if not shared.sd_model.is_webui_legacy_model() or params.sd_model.is_sd3:
+                # fullfatFlux = False
+                # if not fullfatFlux:
+                    ##shared.sd_model.model_config.unet_config['depth'] = 8 # Flex, reduced to 8 double blocks
+                    # shared.sd_model.forge_objects.unet.model.diffusion_model.double_blocks = shared.sd_model.forge_objects.unet.model.diffusion_model.double_blocks[0:8]
+
                 def sigma (timestep, s, d):
                     if d > 0.0:
                         m = (d - shift) / (4096 - 256)
@@ -268,7 +401,8 @@ class forgeMultiPrompt(scripts.Script):
                     dynamic = max
 
                 if thisShift > 0.0:
-                    forgeMultiPrompt.sigmasBackup = shared.sd_model.forge_objects.unet.model.predictor.sigmas
+                    if forgeMultiPrompt.sigmasBackup is None:
+                        forgeMultiPrompt.sigmasBackup = shared.sd_model.forge_objects.unet.model.predictor.sigmas
                     ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
                     shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
 
@@ -276,12 +410,14 @@ class forgeMultiPrompt(scripts.Script):
     def postprocess(self, params, processed, *args):
         enabled = args[0]
         if enabled:
-            isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
-            if isMPModel:
-                if params.sd_model.is_sdxl == True:
-                    StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.glc_backup_sdxl
-                else:
-                    Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
+            if params.sd_model.is_sdxl == True:
+                StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.glc_backup_sdxl
+            elif params.sd_model.is_sd3 == True:
+                StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.glc_backup_sd3
+            elif not shared.sd_model.is_webui_legacy_model():
+                Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
+
+            memory_management.text_encoder_device = forgeMultiPrompt.text_encoder_device_backup
 
             if forgeMultiPrompt.sigmasBackup != None:
                 shared.sd_model.forge_objects.unet.model.predictor.sigmas = forgeMultiPrompt.sigmasBackup
