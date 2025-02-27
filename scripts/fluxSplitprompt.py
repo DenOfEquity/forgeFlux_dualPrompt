@@ -243,7 +243,7 @@ class forgeMultiPrompt(scripts.Script):
 
     def ui(self, *args, **kwargs):
         with InputAccordion(False, label=self.title()) as enabled:
-            _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, Flux) separator keyword: **SPLIT** ###')
+            _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, SD3, Flux) separator keyword: **SPLIT** ###')
 
             with gradio.Row():
                 te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default")
