@@ -19,7 +19,7 @@ SDXL (CLIP-L / CLIP-G) would typically be tags for both but depends on training:
 update 1:
 * added sdXL, why not? In process, prepped code for possible future additions of SD3 / Hunyuan / others?.
 * changed unpatch location. Previously unpatched ASAP therefore wouldn't have applied during hires fix (only relevant if hires fix had new prompt which included SPLIT). In practice, unlikely to be relevant at all.
-* only patches if using appropriate models (Flux or sdXL). Previously always patched if extension enabled, which would have left the patch in place if using a model which didn't use the patched function which would have unpatched itself but couldn't.
+* only patches if using appropriate models (Flux, sdXL, *update* SD3). Previously always patched if extension enabled, which would have left the patch in place if using a model which didn't use the patched function which would have unpatched itself but couldn't.
 * Force clearance of cached conds when extension enabled/disabled.
 * for explanation of these egregious errors, see line 2 of this document.
 
@@ -29,7 +29,7 @@ update 2:
 
 update 3:
 * changed to base/max shift implementation. Max Shift > 0.0 means using the dynamic method.
-* added separate controlsfor HighRes fix. Leave at 0 to use same values as non-HR.
+* added separate controls for HighRes fix. Leave at 0 to use same values as non-HR.
 * added automatic backup/restore of original sigmas, as this overwrites (so previously disabling extension left the last used settings in place)
 
 update 4:
@@ -37,3 +37,10 @@ update 4:
 
 update 5:
 * added option to disable individual text encoders. Different results to sending an empty prompt.
+
+update 6:
+* control of device used for text encoding
+* SD3 text encoder control
+
+update 7:
+* simple FluxTools support (canny and depth). Control image will be automatically resized to UI width and height. Distilled guidance 10+ seems best.

@@ -7,9 +7,12 @@ except:
     StableDiffusion3 = None
 
 import gradio
-import torch, math
+from gradio_rangeslider import RangeSlider
+import torch, math, numpy
 from modules import scripts, shared
 from modules.ui_components import InputAccordion, ToolButton
+from modules.script_callbacks import on_cfg_denoiser, remove_current_script_callbacks
+from modules.sd_samplers_common import images_tensor_to_samples, approximation_indexes
 
 
 import gc
@@ -268,6 +271,26 @@ class forgeMultiPrompt(scripts.Script):
                 shiftHR = gradio.Slider(label='HighRes Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
                 maxHR = gradio.Slider(label='HighRes Max Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
 
+            with InputAccordion(False, label="FluxTools (Canny / Depth)") as ft_enabled:
+                gradio.Markdown("Select canny or depth model in **Checkpoint** menu; add **VAE / Text Encoders** as needed.")
+                gradio.Markdown("Use an appropriately *preprocessed* control image.")
+                with gradio.Row():
+                    with gradio.Column():
+                        control_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
+                    with gradio.Column():
+                        control_strength = gradio.Slider(label="Strength", minimum = 0.0, maximum = 2.0, step = 0.01, value=1.0)
+                        control_time = RangeSlider(label="Start / End", minimum = 0.0, maximum = 1.0, step = 0.01, value=(0.0, 0.8))
+                        image_info = gradio.Markdown("Control image aspect ratio: *no image*")
+                        
+                def update_info (image):
+                    if image is None:
+                        return "Control image aspect ratio: *no image*"
+                    else:
+                        return f"Control image aspect ratio: {image.size[0] / image.size[1]} ({image.size[0]} \u00D7 {image.size[1]})"
+
+                control_image.change(fn=update_info, inputs=[control_image], outputs=[image_info], show_progress=False)
+
+
         self.infotext_fields = [
             (enabled, lambda d: d.get("fmp_enabled", False)),
             (shift,           "fmp_shift"),
@@ -297,7 +320,7 @@ class forgeMultiPrompt(scripts.Script):
         SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
         SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
 
-        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5
+        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, ft_enabled, control_image, control_strength, control_time
 
     def after_extra_networks_activate(self, p, *script_args, **kwargs):
         enabled = script_args[0]
@@ -314,7 +337,7 @@ class forgeMultiPrompt(scripts.Script):
                     pass
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5 = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, ft_enabled, control_image, control_strength, control_time = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -373,7 +396,7 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR = script_args[:5]
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, ft_enabled, control_image, control_strength, control_time = script_args
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
 
@@ -406,6 +429,41 @@ class forgeMultiPrompt(scripts.Script):
                     ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
                     shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
 
+            if not ft_enabled or params.sd_model.is_webui_legacy_model() or control_image is None or control_strength == 0:
+                return
+
+            x = kwargs['x']
+
+            n, c, h, w = x.size()
+
+            image = control_image.resize((w*8, h*8))
+            image = numpy.array(image)
+            image = numpy.transpose(image, (2, 0, 1))
+            image = torch.tensor(image).unsqueeze(0)
+
+            latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+            latent *= control_strength
+            forgeMultiPrompt.latent = latent
+            
+            forgeMultiPrompt.start = control_time[0]
+            forgeMultiPrompt.end = control_time[1]
+            forgeMultiPrompt.strength = control_strength
+
+            def apply_control(self):
+                lastStep = self.total_sampling_steps - 1
+                thisStep = self.sampling_step
+                
+                if thisStep >= forgeMultiPrompt.start * lastStep and thisStep <= forgeMultiPrompt.end * lastStep:
+                    latent_strength = forgeMultiPrompt.latent * forgeMultiPrompt.strength
+                    shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+                else:
+                    latent_strength = forgeMultiPrompt.latent * 0.0
+                    shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+
+            on_cfg_denoiser(apply_control)
+
+            return
+
 
     def postprocess(self, params, processed, *args):
         enabled = args[0]
@@ -426,5 +484,8 @@ class forgeMultiPrompt(scripts.Script):
             if forgeMultiPrompt.prediction_typeBackup != None:
                 params.sd_model.forge_objects.unet.model.predictor.prediction_type = forgeMultiPrompt.prediction_typeBackup
                 forgeMultiPrompt.prediction_typeBackup = None
+
+        shared.sd_model.forge_objects.unet.extra_concat_condition = None
+        remove_current_script_callbacks()
 
         return
