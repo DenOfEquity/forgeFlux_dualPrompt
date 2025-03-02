@@ -10,10 +10,11 @@ import gradio
 from gradio_rangeslider import RangeSlider
 import torch, math, numpy
 from modules import scripts, shared
-from modules.ui_components import InputAccordion, ToolButton
+from modules.ui_components import InputAccordion#, ToolButton
 from modules.script_callbacks import on_cfg_denoiser, remove_current_script_callbacks
 from modules.sd_samplers_common import images_tensor_to_samples, approximation_indexes
-
+from modules_forge.forge_canvas.canvas import ForgeCanvas
+from PIL import Image
 
 import gc
 from backend import memory_management
@@ -246,47 +247,65 @@ class forgeMultiPrompt(scripts.Script):
 
     def ui(self, *args, **kwargs):
         with InputAccordion(False, label=self.title()) as enabled:
-            _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, SD3, Flux) separator keyword: **SPLIT** ###')
 
             with gradio.Row():
-                te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default")
+                _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, SD3, Flux) separator keyword: **SPLIT** ###')
                 prediction_type = gradio.Dropdown(label='Set model prediction type', choices=['default', 'epsilon', 'const', 'v_prediction', 'edm'], value='default', type='value')
 
-            with gradio.Row(visible=(StableDiffusion3 is not None)):
-                SD3_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_T5, label="SD3: use T5")
-                SD3_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CL, label="SD3: use CLIP-L")
-                SD3_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CG, label="SD3: use CLIP-G")
-            with gradio.Row():
-                flux_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.flux_use_T5, label="Flux: use T5")
-                flux_use_CL = gradio.Checkbox(value=forgeMultiPrompt.flux_use_CL, label="Flux: use CLIP (pooled)")
-            with gradio.Row():
-                SDXL_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CL, label="SDXL: use CLIP-L")
-                SDXL_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CG, label="SDXL: use CLIP-G")
+            with gradio.Accordion(label="FluxTools", open=False):
+                with gradio.Tab("Canny / Depth", id="F2E_FT"):
+                    gradio.Markdown("Select Flux Canny or Depth model in **Checkpoint** menu.")
+                    gradio.Markdown("Use an appropriately *preprocessed* control image.")
+                    with gradio.Row():
+                        with gradio.Column():
+                            control_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
+                        with gradio.Column():
+                            control_strength = gradio.Slider(label="Strength", minimum = 0.0, maximum = 2.0, step = 0.01, value=1.0)
+                            control_time = RangeSlider(label="Start / End", minimum = 0.0, maximum = 1.0, step = 0.01, value=(0.0, 0.8))
+                            image_info = gradio.Markdown("Control image aspect ratio: *no image*")
 
-            _ = gradio.Markdown(show_label=False, value='#### Shift control for Flux and SD3. ####')
-            with gradio.Row():
-                shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
-                max = gradio.Slider(label='Max Shift - 0: non-dynamic', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
-            with gradio.Row():
-                shiftHR = gradio.Slider(label='HighRes Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
-                maxHR = gradio.Slider(label='HighRes Max Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                with gradio.Tab("Fill", id="F2E_FT_f"):
+                    gradio.Markdown("Select Flux Fill model in **Checkpoint** menu.")
+                    gradio.Markdown("If a fill image exists, Fill takes priority over Canny or Depth.")
+                    with gradio.Row():
+                        fill_image = ForgeCanvas(height=300, contrast_scribbles=shared.opts.img2img_inpaint_mask_high_contrast, scribble_color=shared.opts.img2img_inpaint_mask_brush_color, scribble_color_fixed=True, scribble_alpha=75, scribble_alpha_fixed=True, scribble_softness_fixed=True)
 
-            with InputAccordion(False, label="FluxTools (Canny / Depth)") as ft_enabled:
-                gradio.Markdown("Select canny or depth model in **Checkpoint** menu; add **VAE / Text Encoders** as needed.")
-                gradio.Markdown("Use an appropriately *preprocessed* control image.")
-                with gradio.Row():
-                    with gradio.Column():
-                        control_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
-                    with gradio.Column():
-                        control_strength = gradio.Slider(label="Strength", minimum = 0.0, maximum = 2.0, step = 0.01, value=1.0)
-                        control_time = RangeSlider(label="Start / End", minimum = 0.0, maximum = 1.0, step = 0.01, value=(0.0, 0.8))
-                        image_info = gradio.Markdown("Control image aspect ratio: *no image*")
+                with gradio.Tab("Redux", id="F2E_FT_r"):
+                    gradio.Markdown("Redux can be combined with another tool, or used alone.")
+                    gradio.Markdown("Select an image to use for Redux.")
+                    with gradio.Row():
+                        with gradio.Column():
+                            redux_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
+                        with gradio.Column():
+                            redux_strength = gradio.Slider(label="Strength", minimum = 0.0, maximum = 2.0, step = 0.01, value=1.0)
+                            redux_time = RangeSlider(label="Start / End", minimum = 0.0, maximum = 1.0, step = 0.01, value=(0.0, 0.8))
                         
+            with gradio.Accordion('Shift for Flux and SD3', open=False):
+                with gradio.Row():
+                    shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                    max = gradio.Slider(label='Max Shift - 0: non-dynamic', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                with gradio.Row():
+                    shiftHR = gradio.Slider(label='HighRes Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+                    maxHR = gradio.Slider(label='HighRes Max Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
+
+            with gradio.Accordion('Text encoders control', open=False):
+                te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default")
+                with gradio.Row(visible=(StableDiffusion3 is not None)):
+                    SD3_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_T5, label="SD3: use T5")
+                    SD3_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CL, label="SD3: use CLIP-L")
+                    SD3_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CG, label="SD3: use CLIP-G")
+                with gradio.Row():
+                    flux_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.flux_use_T5, label="Flux: use T5")
+                    flux_use_CL = gradio.Checkbox(value=forgeMultiPrompt.flux_use_CL, label="Flux: use CLIP (pooled)")
+                with gradio.Row():
+                    SDXL_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CL, label="SDXL: use CLIP-L")
+                    SDXL_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SDXL_use_CG, label="SDXL: use CLIP-G")
+
                 def update_info (image):
                     if image is None:
                         return "Control image aspect ratio: *no image*"
                     else:
-                        return f"Control image aspect ratio: {image.size[0] / image.size[1]} ({image.size[0]} \u00D7 {image.size[1]})"
+                        return f"Control image aspect ratio: {round(image.size[0] / image.size[1], 3)} ({image.size[0]} \u00D7 {image.size[1]})"
 
                 control_image.change(fn=update_info, inputs=[control_image], outputs=[image_info], show_progress=False)
 
@@ -320,7 +339,7 @@ class forgeMultiPrompt(scripts.Script):
         SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
         SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
 
-        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, ft_enabled, control_image, control_strength, control_time
+        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image, redux_strength, redux_time, fill_image.background, fill_image.foreground
 
     def after_extra_networks_activate(self, p, *script_args, **kwargs):
         enabled = script_args[0]
@@ -337,7 +356,7 @@ class forgeMultiPrompt(scripts.Script):
                     pass
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, ft_enabled, control_image, control_strength, control_time = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image, redux_strength, redux_time, fill_image, fill_mask = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -396,10 +415,9 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, ft_enabled, control_image, control_strength, control_time = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image, redux_strength, redux_time, fill_image, fill_mask = script_args
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
-
             if not shared.sd_model.is_webui_legacy_model() or params.sd_model.is_sd3:
                 # fullfatFlux = False
                 # if not fullfatFlux:
@@ -429,40 +447,126 @@ class forgeMultiPrompt(scripts.Script):
                     ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
                     shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
 
-            if not ft_enabled or params.sd_model.is_webui_legacy_model() or control_image is None or control_strength == 0:
-                return
+            if not params.sd_model.is_webui_legacy_model():
+                x = kwargs['x']
+                n, c, h, w = x.size()
+                if fill_image is not None and fill_mask is not None:
+                    mask_A = fill_mask.getchannel('A').convert('L')
+                    mask_A_I = mask_A.point(lambda v: 0 if v > 128 else 255)
+                    mask_A = mask_A.point(lambda v: 255 if v > 128 else 0)
+                    mask = Image.merge('RGBA', (mask_A_I, mask_A_I, mask_A_I, mask_A))#Image.new('L', mask_A.size, 255)))
 
-            x = kwargs['x']
+                    image = Image.alpha_composite(fill_image, mask).convert('RGB')
+                    image = image.resize((w*8, h*8))
+                    image = numpy.array(image) / 255.0
+                    image = numpy.transpose(image, (2, 0, 1))
+                    image = torch.tensor(image).unsqueeze(0)
 
-            n, c, h, w = x.size()
+                    latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                    
+                    
+                    mask = mask_A.resize((w*8, h*8))
+                    mask = numpy.array(mask) / 255
+                    mask = torch.tensor(mask).unsqueeze(0).unsqueeze(0)
+                    mask = mask[:, 0, :, :] #full size mask
+                    mask = mask.view(1, h, 8, w, 8)
+                    mask = mask.permute(0, 2, 4, 1, 3)
+                    mask = mask.reshape(1, 64, h, w)
 
-            image = control_image.resize((w*8, h*8))
-            image = numpy.array(image)
-            image = numpy.transpose(image, (2, 0, 1))
-            image = torch.tensor(image).unsqueeze(0)
+                    forgeMultiPrompt.latent = torch.cat([latent, mask.to(latent.device)], dim=1)
+                    # add an end point where mask is cleared?
+                    # image = fill_image.convert('RGB').resize((w*8, h*8))
+                    # image = numpy.array(image) / 255.0
+                    # image = numpy.transpose(image, (2, 0, 1))
+                    # image = torch.tensor(image).unsqueeze(0)
+                    # unmasked_latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                    # forgeMultiPrompt.unmasked_latent = torch.cat([unmasked_latent, torch.zeroslike(mask).to(latent.device)], dim=1)
+                    forgeMultiPrompt.unmasked_latent = None
+                    
+                    del image, mask
+                    forgeMultiPrompt.start = 0.0
+                    forgeMultiPrompt.end = 1.0
+                    forgeMultiPrompt.strength = 1.0
+                elif control_image and control_strength > 0:
+                    image = control_image.resize((w*8, h*8))
+                    image = numpy.array(image) / 255.0
+                    image = numpy.transpose(image, (2, 0, 1))
+                    image = torch.tensor(image).unsqueeze(0)
 
-            latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
-            latent *= control_strength
-            forgeMultiPrompt.latent = latent
-            
-            forgeMultiPrompt.start = control_time[0]
-            forgeMultiPrompt.end = control_time[1]
-            forgeMultiPrompt.strength = control_strength
-
-            def apply_control(self):
-                lastStep = self.total_sampling_steps - 1
-                thisStep = self.sampling_step
-                
-                if thisStep >= forgeMultiPrompt.start * lastStep and thisStep <= forgeMultiPrompt.end * lastStep:
-                    latent_strength = forgeMultiPrompt.latent * forgeMultiPrompt.strength
-                    shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+                    latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                    forgeMultiPrompt.latent = latent
+                    forgeMultiPrompt.unmasked_latent = None
+                    del image
+                    
+                    forgeMultiPrompt.start = control_time[0]
+                    forgeMultiPrompt.end = control_time[1]
+                    forgeMultiPrompt.strength = control_strength
                 else:
-                    latent_strength = forgeMultiPrompt.latent * 0.0
-                    shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+                    forgeMultiPrompt.latent = None
 
-            on_cfg_denoiser(apply_control)
+                if redux_image and redux_strength > 0:
+                    from transformers import SiglipImageProcessor, SiglipVisionModel
+                    from diffusers.pipelines.flux.modeling_flux import ReduxImageEncoder
 
-            return
+                    feature = SiglipImageProcessor.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="feature_extractor")
+
+                    image = feature.preprocess(
+                        images=redux_image, do_resize=True, return_tensors="pt", do_convert_rgb=True
+                    )
+                    del feature
+                    
+                    encoder = SiglipVisionModel.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_encoder")
+                    #image = image.to(encoder.device)
+
+                    image_enc_hidden_states = encoder(**image).last_hidden_state
+                    del encoder
+                    
+                    embedder = ReduxImageEncoder.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_embedder")
+                    image_embeds = embedder(image_enc_hidden_states).image_embeds
+                    del embedder, image_enc_hidden_states
+
+                    forgeMultiPrompt.redux_start = redux_time[0]
+                    forgeMultiPrompt.redux_end = redux_time[1]
+                    forgeMultiPrompt.redux_strength = redux_strength
+
+                    forgeMultiPrompt.image_embeds = image_embeds
+                else:
+                    forgeMultiPrompt.image_embeds = None
+
+                def apply_control(self):
+                    lastStep = self.total_sampling_steps - 1
+                    thisStep = self.sampling_step
+                    
+                    if forgeMultiPrompt.image_embeds is not None:
+                        if thisStep >= forgeMultiPrompt.redux_start * lastStep and thisStep <= forgeMultiPrompt.redux_end * lastStep:
+                            
+                            image_embeds = forgeMultiPrompt.image_embeds.repeat_interleave(len(self.text_cond["crossattn"]), dim=0)
+
+                            cond = self.text_cond["crossattn"]
+                            image_embeds *= forgeMultiPrompt.redux_strength * (cond.shape[1] / 729) #?hmm
+                            
+                            cond = torch.cat([cond, image_embeds.to(cond.device)], dim=1)
+                            # cond *= forgeMultiPrompt.redux_strength
+                            # cond *= torch.tensor(forgeMultiPrompt.redux_strength, device=cond.device, dtype=cond.dtype)[:, None, None]
+                            cond = torch.sum(cond, dim=0, keepdim=True)
+                            self.text_cond["crossattn"] = cond
+                            
+                            del image_embeds
+
+                    if forgeMultiPrompt.latent is not None:
+                        if thisStep >= forgeMultiPrompt.start * lastStep and thisStep <= forgeMultiPrompt.end * lastStep:
+                            latent_strength = forgeMultiPrompt.latent * forgeMultiPrompt.strength
+                            shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+                        else:
+                            if forgeMultiPrompt.unmasked_latent is not None:    # to allow Fill free reign for later steps
+                                shared.sd_model.forge_objects.unet.extra_concat_condition = forgeMultiPrompt.unmasked_latent
+                            else:
+                                latent_strength = forgeMultiPrompt.latent * 0.0
+                                shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+
+                on_cfg_denoiser(apply_control)
+
+        return
 
 
     def postprocess(self, params, processed, *args):
@@ -485,7 +589,9 @@ class forgeMultiPrompt(scripts.Script):
                 params.sd_model.forge_objects.unet.model.predictor.prediction_type = forgeMultiPrompt.prediction_typeBackup
                 forgeMultiPrompt.prediction_typeBackup = None
 
-        shared.sd_model.forge_objects.unet.extra_concat_condition = None
-        remove_current_script_callbacks()
+            shared.sd_model.forge_objects.unet.extra_concat_condition = None
+            forgeMultiPrompt.latent = None
+            forgeMultiPrompt.unmasked_latent = None
+            remove_current_script_callbacks()
 
         return

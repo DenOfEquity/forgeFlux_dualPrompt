@@ -1,6 +1,4 @@
-## multi-prompt extension for Flux and SDXL in Forge webUI ##
-### intended as quick proof of concept only ###
-#### yet somehow updated already ####
+## extra features extension for Forge2 webUI ##
 
 install:
 **Extensions** tab, **Install from URL**, use URL for this repo
@@ -44,3 +42,9 @@ update 6:
 
 update 7:
 * simple FluxTools support (canny and depth). Control image will be automatically resized to UI width and height. Distilled guidance 10+ seems best.
+
+update 7.5:
+* add FluxTools Redux. Necessary models will be downloaded on first use, just under 1GB.
+
+update 8:
+* add FluxTools Fill. Fill is prioritised, so if an image is in the Fill tab then the Fill process will be used. If not, an image in the Canny / Depth tab will cause that process to be used. Redux can be used in combination with C/D/F, or alone with a standard Flux model. You may need to lower your `GPU Weights` setting by ~250MB. If you have the wrong model selected in Forge, you'll get an error along the lines of `mat1 and mat2 shapes cannot be multiplied`.
