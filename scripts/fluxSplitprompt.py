@@ -270,16 +270,79 @@ class forgeMultiPrompt(scripts.Script):
                     with gradio.Row():
                         fill_image = ForgeCanvas(height=300, contrast_scribbles=shared.opts.img2img_inpaint_mask_high_contrast, scribble_color=shared.opts.img2img_inpaint_mask_brush_color, scribble_color_fixed=True, scribble_alpha=75, scribble_alpha_fixed=True, scribble_softness_fixed=True)
 
-                with gradio.Tab("Redux", id="F2E_FT_r"):
+                with gradio.Tab("Redux", id="F2E_FT_r1"):
                     gradio.Markdown("Redux can be combined with another tool, or used alone.")
                     gradio.Markdown("Select an image to use for Redux.")
                     with gradio.Row():
+                        # with gradio.Column():
+                            # redux_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
                         with gradio.Column():
-                            redux_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
+                            redux_image1 = gradio.Image(show_label=False, type="pil", height=300, sources=["upload", "clipboard"])
                         with gradio.Column():
-                            redux_strength = gradio.Slider(label="Strength", minimum = 0.0, maximum = 2.0, step = 0.01, value=1.0)
-                            redux_time = RangeSlider(label="Start / End", minimum = 0.0, maximum = 1.0, step = 0.01, value=(0.0, 0.8))
+                            redux_str1 = gradio.Slider(label="Strength", minimum=0.0, maximum=2.0, step=0.01, value=1.0)
+                            redux_time1 = RangeSlider(label="Start / End", minimum=0.0, maximum=1.0, step=0.01, value=(0.0, 0.8))
+                            swap12 = gradio.Button("swap redux 1 and 2")
+                            swap13 = gradio.Button("swap redux 1 and 3")
+                            swap14 = gradio.Button("swap redux 1 and 4")
+
+                with gradio.Tab("Redux-2", id="F2E_FT_r2"):
+                    gradio.Markdown("Multiple images can be used for Redux.")
+                    gradio.Markdown("Select an image to use for Redux.")
+                    with gradio.Row():
+                        with gradio.Column():
+                            redux_image2 = gradio.Image(show_label=False, type="pil", height=300, sources=["upload", "clipboard"])
+                        with gradio.Column():
+                            redux_str2 = gradio.Slider(label="Strength", minimum=0.0, maximum=2.0, step=0.01, value=1.0)
+                            redux_time2 = RangeSlider(label="Start / End", minimum=0.0, maximum=1.0, step=0.01, value=(0.0, 0.8))
+                            swap21 = gradio.Button("swap redux 2 and 1")
+                            swap23 = gradio.Button("swap redux 2 and 3")
+                            swap24 = gradio.Button("swap redux 2 and 4")
                         
+                with gradio.Tab("Redux-3", id="F2E_FT_r3"):
+                    gradio.Markdown("Multiple images can be used for Redux.")
+                    gradio.Markdown("Select an image to use for Redux.")
+                    with gradio.Row():
+                        with gradio.Column():
+                            redux_image3 = gradio.Image(show_label=False, type="pil", height=300, sources=["upload", "clipboard"])
+                        with gradio.Column():
+                            redux_str3 = gradio.Slider(label="Strength", minimum=0.0, maximum=2.0, step=0.01, value=1.0)
+                            redux_time3 = RangeSlider(label="Start / End", minimum=0.0, maximum=1.0, step=0.01, value=(0.0, 0.8))
+                            swap31 = gradio.Button("swap redux 3 and 1")
+                            swap32 = gradio.Button("swap redux 3 and 2")
+                            swap34 = gradio.Button("swap redux 3 and 4")
+
+                with gradio.Tab("Redux-4", id="F2E_FT_r4"):
+                    gradio.Markdown("Multiple images can be used for Redux.")
+                    gradio.Markdown("Select an image to use for Redux.")
+                    with gradio.Row():
+                        with gradio.Column():
+                            redux_image4 = gradio.Image(show_label=False, type="pil", height=300, sources=["upload", "clipboard"])
+                        with gradio.Column():
+                            redux_str4 = gradio.Slider(label="Strength", minimum=0.0, maximum=2.0, step=0.01, value=1.0)
+                            redux_time4 = RangeSlider(label="Start / End", minimum=0.0, maximum=1.0, step=0.01, value=(0.0, 0.8))
+                            swap41 = gradio.Button("swap redux 4 and 1")
+                            swap42 = gradio.Button("swap redux 4 and 2")
+                            swap43 = gradio.Button("swap redux 4 and 3")
+
+                def redux_swap(image1, image2, str1, str2, time1, time2):
+                    return image2, image1, str2, str1, time2, time1 #lambda?
+                
+                swap12.click(redux_swap, inputs=[redux_image1, redux_image2, redux_str1, redux_str2, redux_time1, redux_time2], outputs=[redux_image1, redux_image2, redux_str1, redux_str2, redux_time1, redux_time2])
+                swap13.click(redux_swap, inputs=[redux_image1, redux_image3, redux_str1, redux_str3, redux_time1, redux_time3], outputs=[redux_image1, redux_image3, redux_str1, redux_str3, redux_time1, redux_time3])
+                swap14.click(redux_swap, inputs=[redux_image1, redux_image4, redux_str1, redux_str4, redux_time1, redux_time4], outputs=[redux_image1, redux_image4, redux_str1, redux_str4, redux_time1, redux_time4])
+
+                swap21.click(redux_swap, inputs=[redux_image2, redux_image1, redux_str2, redux_str1, redux_time2, redux_time1], outputs=[redux_image2, redux_image1, redux_str2, redux_str1, redux_time2, redux_time1])
+                swap23.click(redux_swap, inputs=[redux_image2, redux_image3, redux_str2, redux_str3, redux_time2, redux_time3], outputs=[redux_image2, redux_image3, redux_str2, redux_str3, redux_time2, redux_time3])
+                swap24.click(redux_swap, inputs=[redux_image2, redux_image4, redux_str2, redux_str4, redux_time2, redux_time4], outputs=[redux_image2, redux_image4, redux_str2, redux_str4, redux_time2, redux_time4])
+
+                swap31.click(redux_swap, inputs=[redux_image3, redux_image1, redux_str3, redux_str1, redux_time3, redux_time1], outputs=[redux_image3, redux_image1, redux_str3, redux_str1, redux_time3, redux_time1])
+                swap32.click(redux_swap, inputs=[redux_image3, redux_image2, redux_str3, redux_str2, redux_time3, redux_time2], outputs=[redux_image3, redux_image2, redux_str3, redux_str2, redux_time3, redux_time2])
+                swap34.click(redux_swap, inputs=[redux_image3, redux_image4, redux_str3, redux_str4, redux_time3, redux_time4], outputs=[redux_image3, redux_image4, redux_str3, redux_str4, redux_time3, redux_time4])
+
+                swap41.click(redux_swap, inputs=[redux_image4, redux_image1, redux_str4, redux_str1, redux_time4, redux_time1], outputs=[redux_image4, redux_image1, redux_str4, redux_str1, redux_time4, redux_time1])
+                swap42.click(redux_swap, inputs=[redux_image4, redux_image2, redux_str4, redux_str2, redux_time4, redux_time2], outputs=[redux_image4, redux_image2, redux_str4, redux_str2, redux_time4, redux_time2])
+                swap43.click(redux_swap, inputs=[redux_image4, redux_image3, redux_str4, redux_str3, redux_time4, redux_time3], outputs=[redux_image4, redux_image3, redux_str4, redux_str3, redux_time4, redux_time3])
+
             with gradio.Accordion('Shift for Flux and SD3', open=False):
                 with gradio.Row():
                     shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
@@ -339,7 +402,12 @@ class forgeMultiPrompt(scripts.Script):
         SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
         SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
 
-        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image, redux_strength, redux_time, fill_image.background, fill_image.foreground
+
+        # redux_images = [redux_image1, redux_image2, redux_image3, redux_image4]
+        # redux_strengths = [redux_str1, redux_str2, redux_str3, redux_str4]
+        # redux_times = [redux_time1, redux_time2, redux_time3, redux_time4]
+
+        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image.background, fill_image.foreground
 
     def after_extra_networks_activate(self, p, *script_args, **kwargs):
         enabled = script_args[0]
@@ -356,7 +424,7 @@ class forgeMultiPrompt(scripts.Script):
                     pass
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image, redux_strength, redux_time, fill_image, fill_mask = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -415,7 +483,7 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image, redux_strength, redux_time, fill_image, fill_mask = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask = script_args
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
             if not shared.sd_model.is_webui_legacy_model() or params.sd_model.is_sd3:
@@ -463,8 +531,7 @@ class forgeMultiPrompt(scripts.Script):
                     image = torch.tensor(image).unsqueeze(0)
 
                     latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
-                    
-                    
+
                     mask = mask_A.resize((w*8, h*8))
                     mask = numpy.array(mask) / 255
                     mask = torch.tensor(mask).unsqueeze(0).unsqueeze(0)
@@ -504,32 +571,38 @@ class forgeMultiPrompt(scripts.Script):
                 else:
                     forgeMultiPrompt.latent = None
 
-                if redux_image and redux_strength > 0:
+
+                redux_images = [redux_image1, redux_image2, redux_image3, redux_image4]
+                redux_strengths = [redux_str1, redux_str2, redux_str3, redux_str4]
+                redux_times = [redux_time1, redux_time2, redux_time3, redux_time4]
+
+                if redux_images != [None, None, None, None] and redux_strengths != [0, 0, 0, 0]:
                     from transformers import SiglipImageProcessor, SiglipVisionModel
                     from diffusers.pipelines.flux.modeling_flux import ReduxImageEncoder
 
-                    feature = SiglipImageProcessor.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="feature_extractor")
+                    embeds = []
+                    for i in range(len(redux_images)):
+                        if redux_images[i] is None or redux_strengths[i] == 0:
+                            continue
 
-                    image = feature.preprocess(
-                        images=redux_image, do_resize=True, return_tensors="pt", do_convert_rgb=True
-                    )
-                    del feature
-                    
-                    encoder = SiglipVisionModel.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_encoder")
-                    #image = image.to(encoder.device)
+                        feature = SiglipImageProcessor.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="feature_extractor")
 
-                    image_enc_hidden_states = encoder(**image).last_hidden_state
-                    del encoder
-                    
-                    embedder = ReduxImageEncoder.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_embedder")
-                    image_embeds = embedder(image_enc_hidden_states).image_embeds
-                    del embedder, image_enc_hidden_states
+                        image = feature.preprocess(
+                            images=redux_images[i], do_resize=True, return_tensors="pt", do_convert_rgb=True
+                        )
+                        del feature
+                        
+                        encoder = SiglipVisionModel.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_encoder")
 
-                    forgeMultiPrompt.redux_start = redux_time[0]
-                    forgeMultiPrompt.redux_end = redux_time[1]
-                    forgeMultiPrompt.redux_strength = redux_strength
+                        image_enc_hidden_states = encoder(**image).last_hidden_state
+                        del encoder
+                        
+                        embedder = ReduxImageEncoder.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_embedder")
+                        # image_embeds = embedder(image_enc_hidden_states).image_embeds
+                        embeds.append((redux_strengths[i] * embedder(image_enc_hidden_states).image_embeds, redux_times[i][0], redux_times[i][1]))
+                        del embedder, image_enc_hidden_states
 
-                    forgeMultiPrompt.image_embeds = image_embeds
+                    forgeMultiPrompt.image_embeds = embeds
                 else:
                     forgeMultiPrompt.image_embeds = None
 
@@ -538,20 +611,20 @@ class forgeMultiPrompt(scripts.Script):
                     thisStep = self.sampling_step
                     
                     if forgeMultiPrompt.image_embeds is not None:
-                        if thisStep >= forgeMultiPrompt.redux_start * lastStep and thisStep <= forgeMultiPrompt.redux_end * lastStep:
-                            
-                            image_embeds = forgeMultiPrompt.image_embeds.repeat_interleave(len(self.text_cond["crossattn"]), dim=0)
+                        embeds = forgeMultiPrompt.image_embeds
+                        cond = self.text_cond["crossattn"]
+                        for e in embeds:
+                            if thisStep >= e[1] * lastStep and thisStep <= e[2] * lastStep:
+                                image_embeds = e[0].repeat_interleave(len(self.text_cond["crossattn"]), dim=0)
 
-                            cond = self.text_cond["crossattn"]
-                            image_embeds *= forgeMultiPrompt.redux_strength * (cond.shape[1] / 729) #?hmm
-                            
-                            cond = torch.cat([cond, image_embeds.to(cond.device)], dim=1)
-                            # cond *= forgeMultiPrompt.redux_strength
-                            # cond *= torch.tensor(forgeMultiPrompt.redux_strength, device=cond.device, dtype=cond.dtype)[:, None, None]
-                            cond = torch.sum(cond, dim=0, keepdim=True)
-                            self.text_cond["crossattn"] = cond
-                            
-                            del image_embeds
+                                image_embeds *= (256 / 729) #?hmm, scale down to give prompt a chance
+                                
+                                cond = torch.cat([cond, image_embeds.to(cond.device)], dim=1)
+                                #or blend?
+
+                                del image_embeds
+                        cond = torch.sum(cond, dim=0, keepdim=True)
+                        self.text_cond["crossattn"] = cond
 
                     if forgeMultiPrompt.latent is not None:
                         if thisStep >= forgeMultiPrompt.start * lastStep and thisStep <= forgeMultiPrompt.end * lastStep:
@@ -590,6 +663,7 @@ class forgeMultiPrompt(scripts.Script):
                 forgeMultiPrompt.prediction_typeBackup = None
 
             shared.sd_model.forge_objects.unet.extra_concat_condition = None
+            forgeMultiPrompt.image_embeds = None
             forgeMultiPrompt.latent = None
             forgeMultiPrompt.unmasked_latent = None
             remove_current_script_callbacks()
