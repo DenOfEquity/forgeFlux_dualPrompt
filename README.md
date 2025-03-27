@@ -3,6 +3,11 @@
 install:
 **Extensions** tab, **Install from URL**, use URL for this repo
 
+Necessary for Flux Redux - update **requirements_versions.txt** in the webUI directory.
+```
+diffusers>=0.32.0
+```
+
 usage:
 1. Enable the extension
 2. use the Prompt textbox as normal
@@ -44,7 +49,7 @@ update 7:
 * simple FluxTools support (canny and depth). Control image will be automatically resized to UI width and height. Distilled guidance 10+ seems best.
 
 update 7.5:
-* add FluxTools Redux. Necessary models will be downloaded on first use, just under 1GB.
+* add FluxTools Redux. Necessary models will be downloaded on first use, just under 1GB. Redux requires `diffusers>=0.32.0`.
 
 update 8:
 * add FluxTools Fill. Fill is prioritised, so if an image is in the Fill tab then the Fill process will be used. If not, an image in the Canny / Depth tab will cause that process to be used. Redux can be used in combination with C/D/F, or alone with a standard Flux model. You may need to lower your `GPU Weights` setting by ~250MB. If you have the wrong model selected in Forge, you'll get an error along the lines of `mat1 and mat2 shapes cannot be multiplied`.
