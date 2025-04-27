@@ -9,12 +9,14 @@ except:
 import gradio
 from gradio_rangeslider import RangeSlider
 import torch, math, numpy
+import torchvision.transforms.functional as TF
+
 from modules import scripts, shared
 from modules.ui_components import InputAccordion#, ToolButton
 from modules.script_callbacks import on_cfg_denoiser, remove_current_script_callbacks
 from modules.sd_samplers_common import images_tensor_to_samples, approximation_indexes
 from modules_forge.forge_canvas.canvas import ForgeCanvas
-from PIL import Image
+from PIL import Image, ImageFilter
 
 import gc
 from backend import memory_management
@@ -265,8 +267,8 @@ class forgeMultiPrompt(scripts.Script):
                             image_info = gradio.Markdown("Control image aspect ratio: *no image*")
 
                 with gradio.Tab("Fill", id="F2E_FT_f"):
-                    gradio.Markdown("Select Flux Fill model in **Checkpoint** menu.")
-                    gradio.Markdown("If a fill image exists, Fill takes priority over Canny or Depth.")
+                    gradio.Markdown("Select Flux Fill model in **Checkpoint** menu")
+                    gradio.Markdown("If this tab is used, it takes priority over Canny / Depth.")
                     with gradio.Row():
                         fill_image = ForgeCanvas(height=300, contrast_scribbles=shared.opts.img2img_inpaint_mask_high_contrast, scribble_color=shared.opts.img2img_inpaint_mask_brush_color, scribble_color_fixed=True, scribble_alpha=75, scribble_alpha_fixed=True, scribble_softness_fixed=True)
 
@@ -274,8 +276,6 @@ class forgeMultiPrompt(scripts.Script):
                     gradio.Markdown("Redux can be combined with another tool, or used alone.")
                     gradio.Markdown("Select an image to use for Redux.")
                     with gradio.Row():
-                        # with gradio.Column():
-                            # redux_image = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
                         with gradio.Column():
                             redux_image1 = gradio.Image(show_label=False, type="pil", height=300, sources=["upload", "clipboard"])
                         with gradio.Column():
@@ -324,24 +324,31 @@ class forgeMultiPrompt(scripts.Script):
                             swap42 = gradio.Button("swap redux 4 and 2")
                             swap43 = gradio.Button("swap redux 4 and 3")
 
-                def redux_swap(image1, image2, str1, str2, time1, time2):
-                    return image2, image1, str2, str1, time2, time1 #lambda?
+
+                def redux_swap(imageA, strA, timeA, imageB, strB, timeB):
+                    return imageB, strB, timeB, imageA, strA, timeA
+                    
+                swap_1 = [redux_image1, redux_str1, redux_time1]
+                swap_2 = [redux_image2, redux_str2, redux_time2]
+                swap_3 = [redux_image3, redux_str3, redux_time3]
+                swap_4 = [redux_image4, redux_str4, redux_time4]
                 
-                swap12.click(redux_swap, inputs=[redux_image1, redux_image2, redux_str1, redux_str2, redux_time1, redux_time2], outputs=[redux_image1, redux_image2, redux_str1, redux_str2, redux_time1, redux_time2])
-                swap13.click(redux_swap, inputs=[redux_image1, redux_image3, redux_str1, redux_str3, redux_time1, redux_time3], outputs=[redux_image1, redux_image3, redux_str1, redux_str3, redux_time1, redux_time3])
-                swap14.click(redux_swap, inputs=[redux_image1, redux_image4, redux_str1, redux_str4, redux_time1, redux_time4], outputs=[redux_image1, redux_image4, redux_str1, redux_str4, redux_time1, redux_time4])
+                swap12.click(fn=redux_swap, inputs=swap_1+swap_2, outputs=swap_1+swap_2)
+                swap13.click(fn=redux_swap, inputs=swap_1+swap_3, outputs=swap_1+swap_3)
+                swap14.click(fn=redux_swap, inputs=swap_1+swap_4, outputs=swap_1+swap_4)
 
-                swap21.click(redux_swap, inputs=[redux_image2, redux_image1, redux_str2, redux_str1, redux_time2, redux_time1], outputs=[redux_image2, redux_image1, redux_str2, redux_str1, redux_time2, redux_time1])
-                swap23.click(redux_swap, inputs=[redux_image2, redux_image3, redux_str2, redux_str3, redux_time2, redux_time3], outputs=[redux_image2, redux_image3, redux_str2, redux_str3, redux_time2, redux_time3])
-                swap24.click(redux_swap, inputs=[redux_image2, redux_image4, redux_str2, redux_str4, redux_time2, redux_time4], outputs=[redux_image2, redux_image4, redux_str2, redux_str4, redux_time2, redux_time4])
+                swap21.click(fn=redux_swap, inputs=swap_2+swap_1, outputs=swap_2+swap_1)
+                swap23.click(fn=redux_swap, inputs=swap_2+swap_3, outputs=swap_2+swap_3)
+                swap24.click(fn=redux_swap, inputs=swap_2+swap_4, outputs=swap_2+swap_4)
 
-                swap31.click(redux_swap, inputs=[redux_image3, redux_image1, redux_str3, redux_str1, redux_time3, redux_time1], outputs=[redux_image3, redux_image1, redux_str3, redux_str1, redux_time3, redux_time1])
-                swap32.click(redux_swap, inputs=[redux_image3, redux_image2, redux_str3, redux_str2, redux_time3, redux_time2], outputs=[redux_image3, redux_image2, redux_str3, redux_str2, redux_time3, redux_time2])
-                swap34.click(redux_swap, inputs=[redux_image3, redux_image4, redux_str3, redux_str4, redux_time3, redux_time4], outputs=[redux_image3, redux_image4, redux_str3, redux_str4, redux_time3, redux_time4])
+                swap31.click(fn=redux_swap, inputs=swap_3+swap_1, outputs=swap_3+swap_1)
+                swap32.click(fn=redux_swap, inputs=swap_3+swap_2, outputs=swap_3+swap_2)
+                swap34.click(fn=redux_swap, inputs=swap_3+swap_4, outputs=swap_3+swap_4)
 
-                swap41.click(redux_swap, inputs=[redux_image4, redux_image1, redux_str4, redux_str1, redux_time4, redux_time1], outputs=[redux_image4, redux_image1, redux_str4, redux_str1, redux_time4, redux_time1])
-                swap42.click(redux_swap, inputs=[redux_image4, redux_image2, redux_str4, redux_str2, redux_time4, redux_time2], outputs=[redux_image4, redux_image2, redux_str4, redux_str2, redux_time4, redux_time2])
-                swap43.click(redux_swap, inputs=[redux_image4, redux_image3, redux_str4, redux_str3, redux_time4, redux_time3], outputs=[redux_image4, redux_image3, redux_str4, redux_str3, redux_time4, redux_time3])
+                swap41.click(fn=redux_swap, inputs=swap_4+swap_1, outputs=swap_4+swap_1)
+                swap42.click(fn=redux_swap, inputs=swap_4+swap_2, outputs=swap_4+swap_2)
+                swap43.click(fn=redux_swap, inputs=swap_4+swap_3, outputs=swap_4+swap_3)
+
 
             with gradio.Accordion('Shift for Flux and SD3', open=False):
                 with gradio.Row():
@@ -371,6 +378,17 @@ class forgeMultiPrompt(scripts.Script):
                         return f"Control image aspect ratio: {round(image.size[0] / image.size[1], 3)} ({image.size[0]} \u00D7 {image.size[1]})"
 
                 control_image.change(fn=update_info, inputs=[control_image], outputs=[image_info], show_progress=False)
+
+            with InputAccordion(False, label="Flex.2") as use_flex2:
+                gradio.Markdown("Select Flex.2 model in **Checkpoint** menu.")
+                gradio.Markdown("Inputs are optional. Control image must be appropriately *preprocessed* (depth / line / pose).")
+                with gradio.Row():
+                    with gradio.Column():
+                        flex2_image = ForgeCanvas(height=388, contrast_scribbles=shared.opts.img2img_inpaint_mask_high_contrast, scribble_color=shared.opts.img2img_inpaint_mask_brush_color, scribble_color_fixed=True, scribble_alpha=75, scribble_alpha_fixed=True, scribble_softness_fixed=True)
+                    with gradio.Column():
+                        flex2_control = gradio.Image(label="Control image", type="pil", height=300, sources=["upload", "clipboard"])
+                        flex2_strength = gradio.Slider(label="Strength", minimum = 0.0, maximum = 2.0, step = 0.01, value=1.0)
+                        flex2_time = RangeSlider(label="Start / End", minimum = 0.0, maximum = 1.0, step = 0.01, value=(0.0, 0.8))
 
 
         self.infotext_fields = [
@@ -402,12 +420,7 @@ class forgeMultiPrompt(scripts.Script):
         SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
         SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
 
-
-        # redux_images = [redux_image1, redux_image2, redux_image3, redux_image4]
-        # redux_strengths = [redux_str1, redux_str2, redux_str3, redux_str4]
-        # redux_times = [redux_time1, redux_time2, redux_time3, redux_time4]
-
-        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image.background, fill_image.foreground
+        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image.background, fill_image.foreground, use_flex2, flex2_image.background, flex2_image.foreground, flex2_control, flex2_strength, flex2_time
 
     def after_extra_networks_activate(self, p, *script_args, **kwargs):
         enabled = script_args[0]
@@ -424,7 +437,7 @@ class forgeMultiPrompt(scripts.Script):
                     pass
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -483,7 +496,7 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask = script_args
+        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
             if not shared.sd_model.is_webui_legacy_model() or params.sd_model.is_sd3:
@@ -518,58 +531,93 @@ class forgeMultiPrompt(scripts.Script):
             if not params.sd_model.is_webui_legacy_model():
                 x = kwargs['x']
                 n, c, h, w = x.size()
-                if fill_image is not None and fill_mask is not None:
-                    mask_A = fill_mask.getchannel('A').convert('L')
-                    mask_A_I = mask_A.point(lambda v: 0 if v > 128 else 255)
-                    mask_A = mask_A.point(lambda v: 255 if v > 128 else 0)
-                    mask = Image.merge('RGBA', (mask_A_I, mask_A_I, mask_A_I, mask_A))#Image.new('L', mask_A.size, 255)))
 
-                    image = Image.alpha_composite(fill_image, mask).convert('RGB')
-                    image = image.resize((w*8, h*8))
-                    image = numpy.array(image) / 255.0
-                    image = numpy.transpose(image, (2, 0, 1))
-                    image = torch.tensor(image).unsqueeze(0)
+                if use_flex2:
+                    if flex2_image is None:
+                        flex_latent = torch.zeros([1, 16, h, w])
+                        flex_mask = torch.ones([1, 1, h, w])
+                    else:
+                        image = flex2_image.convert('RGB').resize((w*8, h*8))
+                        image = numpy.array(image) / 255.0
+                        image = numpy.transpose(image, (2, 0, 1))
+                        image = torch.tensor(image).unsqueeze(0)
 
-                    latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                        mask_A = flex2_mask.getchannel('A').convert('L')
+                        mask_A = mask_A.point(lambda v: 255 if v > 128 else 0)
+                        mask_A = mask_A.resize((w, h))
+                        mask_A = numpy.array(mask_A) / 255.0
+                        flex_mask = torch.tensor(mask_A).unsqueeze(0).unsqueeze(0)
+                        
+                        flex_latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                        flex_latent *= (1.0 - flex_mask.to(flex_latent.device))
 
-                    mask = mask_A.resize((w*8, h*8))
-                    mask = numpy.array(mask) / 255
-                    mask = torch.tensor(mask).unsqueeze(0).unsqueeze(0)
-                    mask = mask[:, 0, :, :] #full size mask
-                    mask = mask.view(1, h, 8, w, 8)
-                    mask = mask.permute(0, 2, 4, 1, 3)
-                    mask = mask.reshape(1, 64, h, w)
+                    if flex2_control is None:
+                        flex_control = torch.zeros([1, 16, h, w])
+                        forgeMultiPrompt.start = 0.0
+                        forgeMultiPrompt.end = 1.0
+                    else:
+                        control_image = flex2_control.resize((w*8, h*8))
+                        control_image = numpy.array(control_image) / 255.0
+                        control_image = numpy.transpose(control_image, (2, 0, 1))
+                        control_image = torch.tensor(control_image).unsqueeze(0)
+                        flex_control = images_tensor_to_samples(control_image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                        flex_control *= flex2_strength
+                        forgeMultiPrompt.start = flex2_time[0]
+                        forgeMultiPrompt.end = flex2_time[1]
 
-                    forgeMultiPrompt.latent = torch.cat([latent, mask.to(latent.device)], dim=1)
-                    # add an end point where mask is cleared?
-                    # image = fill_image.convert('RGB').resize((w*8, h*8))
-                    # image = numpy.array(image) / 255.0
-                    # image = numpy.transpose(image, (2, 0, 1))
-                    # image = torch.tensor(image).unsqueeze(0)
-                    # unmasked_latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
-                    # forgeMultiPrompt.unmasked_latent = torch.cat([unmasked_latent, torch.zeroslike(mask).to(latent.device)], dim=1)
-                    forgeMultiPrompt.unmasked_latent = None
-                    
-                    del image, mask
-                    forgeMultiPrompt.start = 0.0
-                    forgeMultiPrompt.end = 1.0
                     forgeMultiPrompt.strength = 1.0
-                elif control_image and control_strength > 0:
-                    image = control_image.resize((w*8, h*8))
-                    image = numpy.array(image) / 255.0
-                    image = numpy.transpose(image, (2, 0, 1))
-                    image = torch.tensor(image).unsqueeze(0)
+                    forgeMultiPrompt.latent = torch.cat([flex_latent, flex_mask.to(flex_latent.device), flex_control.to(flex_latent.device)], dim=1)
 
-                    latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
-                    forgeMultiPrompt.latent = latent
-                    forgeMultiPrompt.unmasked_latent = None
-                    del image
-                    
-                    forgeMultiPrompt.start = control_time[0]
-                    forgeMultiPrompt.end = control_time[1]
-                    forgeMultiPrompt.strength = control_strength
-                else:
-                    forgeMultiPrompt.latent = None
+                else:   # FluxTools
+                    if (fill_image is not None and fill_mask is not None):
+                        mask_A = fill_mask.getchannel('A').convert('L')
+                        mask_A_I = mask_A.point(lambda v: 0 if v > 128 else 255)
+                        mask_A = mask_A.point(lambda v: 255 if v > 128 else 0)
+
+                        # mask_A_I = mask_A.point(lambda v: 255-v)
+                        # mask_A = mask_A.point(lambda v: 255 if v > 0 else 0)
+
+                        mask = Image.merge('RGBA', (mask_A_I, mask_A_I, mask_A_I, mask_A))
+
+                        image = Image.alpha_composite(fill_image, mask).convert('RGB')
+                        image = image.resize((w*8, h*8))
+                        image = numpy.array(image) / 255.0
+                        image = numpy.transpose(image, (2, 0, 1))
+                        image = torch.tensor(image).unsqueeze(0)
+
+                        mask = mask_A.resize((w*8, h*8))
+                        mask = numpy.array(mask) / 255.0
+                        mask = torch.tensor(mask).unsqueeze(0).unsqueeze(0)
+                        #mask = mask[:, 0, :, :]
+                        mask = mask.view(1, h, 8, w, 8)
+                        mask = mask.permute(0, 2, 4, 1, 3)
+                        mask = mask.reshape(1, 64, h, w)
+
+                        latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                        mask = images_tensor_to_samples(mask, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+
+                        forgeMultiPrompt.latent = torch.cat([latent, mask.to(latent.device)], dim=1)
+
+                        del latent, image, mask
+                        
+                        forgeMultiPrompt.start = 0.0
+                        forgeMultiPrompt.end = 1.0
+                        forgeMultiPrompt.strength = 1.0
+                    elif control_image and control_strength > 0:
+                        image = control_image.resize((w*8, h*8))
+                        image = numpy.array(image) / 255.0
+                        image = numpy.transpose(image, (2, 0, 1))
+                        image = torch.tensor(image).unsqueeze(0)
+
+                        latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
+                        forgeMultiPrompt.latent = latent
+                        del image
+                        
+                        forgeMultiPrompt.start = control_time[0]
+                        forgeMultiPrompt.end = control_time[1]
+                        forgeMultiPrompt.strength = control_strength
+                    else:
+                        forgeMultiPrompt.latent = None
 
 
                 redux_images = [redux_image1, redux_image2, redux_image3, redux_image4]
@@ -579,7 +627,7 @@ class forgeMultiPrompt(scripts.Script):
                 if redux_images != [None, None, None, None] and redux_strengths != [0, 0, 0, 0]:
                     from transformers import SiglipImageProcessor, SiglipVisionModel
                     from diffusers.pipelines.flux.modeling_flux import ReduxImageEncoder
-
+#maybe move model loading outside loop?
                     embeds = []
                     for i in range(len(redux_images)):
                         if redux_images[i] is None or redux_strengths[i] == 0:
@@ -598,7 +646,6 @@ class forgeMultiPrompt(scripts.Script):
                         del encoder
                         
                         embedder = ReduxImageEncoder.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_embedder")
-                        # image_embeds = embedder(image_enc_hidden_states).image_embeds
                         embeds.append((redux_strengths[i] * embedder(image_enc_hidden_states).image_embeds, redux_times[i][0], redux_times[i][1]))
                         del embedder, image_enc_hidden_states
 
@@ -618,6 +665,8 @@ class forgeMultiPrompt(scripts.Script):
                                 image_embeds = e[0].repeat_interleave(len(self.text_cond["crossattn"]), dim=0)
 
                                 image_embeds *= (256 / 729) #?hmm, scale down to give prompt a chance
+                                                            # 256 could be cond.shape[1]
+                                                            # 729 could be image_embeds.shape[1]
                                 
                                 cond = torch.cat([cond, image_embeds.to(cond.device)], dim=1)
                                 #or blend?
@@ -631,11 +680,12 @@ class forgeMultiPrompt(scripts.Script):
                             latent_strength = forgeMultiPrompt.latent * forgeMultiPrompt.strength
                             shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
                         else:
-                            if forgeMultiPrompt.unmasked_latent is not None:    # to allow Fill free reign for later steps
-                                shared.sd_model.forge_objects.unet.extra_concat_condition = forgeMultiPrompt.unmasked_latent
+                            if use_flex2:
+                                latent_strength = forgeMultiPrompt.latent.clone()
+                                latent_strength[:, 17:, :, :] = 0.0
                             else:
                                 latent_strength = forgeMultiPrompt.latent * 0.0
-                                shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
+                            shared.sd_model.forge_objects.unet.extra_concat_condition = latent_strength
 
                 on_cfg_denoiser(apply_control)
 
@@ -665,7 +715,33 @@ class forgeMultiPrompt(scripts.Script):
             shared.sd_model.forge_objects.unet.extra_concat_condition = None
             forgeMultiPrompt.image_embeds = None
             forgeMultiPrompt.latent = None
-            forgeMultiPrompt.unmasked_latent = None
             remove_current_script_callbacks()
+
+        return
+
+
+    # simple composite is bad - obvious edge
+    def postprocess_image (self, params, pp, *args):
+        enabled = args[0]
+        if enabled and not shared.sd_model.is_webui_legacy_model():
+            # FluxFill composite with original to avoid vae round-trip errors
+            use_flex2 = args[-6]
+            if use_flex2:
+                fill_image = args[-5]
+                fill_mask = args[-4]
+            else:
+                fill_image = args[-8]
+                fill_mask = args[-7]
+            if fill_image is not None and fill_mask is not None:
+                w = pp.image.size[0]
+                h = pp.image.size[1]
+                image = fill_image.resize((w, h))
+                mask = fill_mask.resize((w, h))
+
+                short_side = min(mask.size)
+                dilation_size = int(0.05 * short_side) * 2 + 1
+                mask = TF.gaussian_blur(mask.filter(ImageFilter.MaxFilter(dilation_size)), dilation_size)
+
+                pp.image = Image.composite(pp.image, image, mask)
 
         return
