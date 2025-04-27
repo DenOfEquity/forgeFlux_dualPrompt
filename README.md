@@ -53,3 +53,11 @@ update 7.5:
 
 update 8:
 * add FluxTools Fill. Fill is prioritised, so if an image is in the Fill tab then the Fill process will be used. If not, an image in the Canny / Depth tab will cause that process to be used. Redux can be used in combination with C/D/F, or alone with a standard Flux model. You may need to lower your `GPU Weights` setting by ~250MB. If you have the wrong model selected in Forge, you'll get an error along the lines of `mat1 and mat2 shapes cannot be multiplied`.
+
+update 9:
+* add Flex.2 support. Needs modification to Forge2 files to detect the load correctly:
+    * edit `repositories/huggingface_guess/huggingface_guess/detection.py`
+    * find line 147, currently `dit_config["depth"] = 19`
+    * change to `dit_config["depth"] = 19 if '{}double_blocks.8.img_attn.norm.key_norm.scale'.format(key_prefix) in state_dict_keys else 8`
+
+    if you get error 'torch.OutOfMemoryError: Allocation on device', lower **GPU Weights (MB)**
