@@ -499,6 +499,10 @@ class forgeMultiPrompt(scripts.Script):
         enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
+
+            if not hasattr(shared.sd_model.model_config.unet_config, 'depth') or shared.sd_model.model_config.unet_config['depth'] != 8:
+                use_flex2 = False
+
             if not shared.sd_model.is_webui_legacy_model() or params.sd_model.is_sd3:
                 # fullfatFlux = False
                 # if not fullfatFlux:
@@ -627,27 +631,26 @@ class forgeMultiPrompt(scripts.Script):
                 if redux_images != [None, None, None, None] and redux_strengths != [0, 0, 0, 0]:
                     from transformers import SiglipImageProcessor, SiglipVisionModel
                     from diffusers.pipelines.flux.modeling_flux import ReduxImageEncoder
-#maybe move model loading outside loop?
+
+                    feature = SiglipImageProcessor.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="feature_extractor")
+                    encoder = SiglipVisionModel.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_encoder")
+                    embedder = ReduxImageEncoder.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_embedder")
+
                     embeds = []
                     for i in range(len(redux_images)):
                         if redux_images[i] is None or redux_strengths[i] == 0:
                             continue
 
-                        feature = SiglipImageProcessor.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="feature_extractor")
-
                         image = feature.preprocess(
                             images=redux_images[i], do_resize=True, return_tensors="pt", do_convert_rgb=True
                         )
-                        del feature
                         
-                        encoder = SiglipVisionModel.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_encoder")
-
                         image_enc_hidden_states = encoder(**image).last_hidden_state
-                        del encoder
                         
-                        embedder = ReduxImageEncoder.from_pretrained("Runware/FLUX.1-Redux-dev", subfolder="image_embedder")
                         embeds.append((redux_strengths[i] * embedder(image_enc_hidden_states).image_embeds, redux_times[i][0], redux_times[i][1]))
-                        del embedder, image_enc_hidden_states
+                        del image_enc_hidden_states
+
+                    del feature, encoder, embedder
 
                     forgeMultiPrompt.image_embeds = embeds
                 else:
@@ -726,6 +729,9 @@ class forgeMultiPrompt(scripts.Script):
         if enabled and not shared.sd_model.is_webui_legacy_model():
             # FluxFill composite with original to avoid vae round-trip errors
             use_flex2 = args[-6]
+            if not hasattr(shared.sd_model.model_config.unet_config, 'depth') or shared.sd_model.model_config.unet_config['depth'] != 8:
+                use_flex2 = False
+
             if use_flex2:
                 fill_image = args[-5]
                 fill_mask = args[-4]
