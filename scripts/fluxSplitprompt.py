@@ -695,6 +695,14 @@ class forgeMultiPrompt(scripts.Script):
         return
 
 
+    def postprocess_batch(self, params, *args, **kwargs):
+        enabled = args[0]
+        if enabled:
+            remove_current_script_callbacks()
+
+        return
+
+
     def postprocess(self, params, processed, *args):
         enabled = args[0]
         if enabled:
