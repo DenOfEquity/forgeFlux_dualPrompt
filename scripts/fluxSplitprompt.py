@@ -500,6 +500,9 @@ class forgeMultiPrompt(scripts.Script):
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
 
+            if params.iteration > 0:
+                return
+
             if not hasattr(shared.sd_model.model_config.unet_config, 'depth') or shared.sd_model.model_config.unet_config['depth'] != 8:
                 use_flex2 = False
 
@@ -695,12 +698,12 @@ class forgeMultiPrompt(scripts.Script):
         return
 
 
-    def postprocess_batch(self, params, *args, **kwargs):
-        enabled = args[0]
-        if enabled:
-            remove_current_script_callbacks()
-
-        return
+#    def postprocess_batch(self, params, *args, **kwargs):
+#        enabled = args[0]
+#        if enabled:
+#            remove_current_script_callbacks()
+#
+#        return
 
 
     def postprocess(self, params, processed, *args):
