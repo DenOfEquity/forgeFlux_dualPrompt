@@ -46,7 +46,7 @@ update 6:
 * SD3 text encoder control
 
 update 7:
-* simple FluxTools support (canny and depth). Control image will be automatically resized to UI width and height. Distilled guidance 10+ seems best.
+* simple FluxTools support (canny and depth). Control image will be automatically resized to UI width and height. Distilled guidance 10+ seems best. *Motivated by https://github.com/AcademiaSD/sd-forge-fluxcontrolnet*
 
 update 7.5:
 * add FluxTools Redux. Necessary models will be downloaded on first use, just under 1GB. Redux requires `diffusers>=0.32.0`.
@@ -61,3 +61,8 @@ update 9:
     * change to `dit_config["depth"] = 19 if '{}double_blocks.8.img_attn.norm.key_norm.scale'.format(key_prefix) in state_dict_keys else 8`
 
     if you get error 'torch.OutOfMemoryError: Allocation on device', lower **GPU Weights (MB)**
+
+update 10:
+* add Flux LayerDiffuse (transparent VAE) support, decoding only. *Motivated by https://github.com/DrUmranAli/FluxZayn*
+    * get LoRA and VAE from http://huggingface.co/RedAIGC/Flux-version-LayerDiffuse
+        * use LoRA normally; save VAE to models directory (not to VAE subdirectory) - the extension uses it, not Forge.

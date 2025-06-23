@@ -11,21 +11,148 @@ from gradio_rangeslider import RangeSlider
 import torch, math, numpy
 import torchvision.transforms.functional as TF
 
-from modules import scripts, shared
+from modules import scripts, shared, images
 from modules.ui_components import InputAccordion#, ToolButton
 from modules.script_callbacks import on_cfg_denoiser, remove_current_script_callbacks
 from modules.sd_samplers_common import images_tensor_to_samples, approximation_indexes
 from modules_forge.forge_canvas.canvas import ForgeCanvas
 from PIL import Image, ImageFilter
 
-import gc
 from backend import memory_management
 from modules_forge import main_entry
 
 
+##  Flux transparent VAE - from https://github.com/RedAIGC/Flux-version-LayerDiffuse
+from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block 
+
+def zero_module(module): 
+    for p in module.parameters():
+        p.detach().zero_()
+    return module
+
+class LatentTransparencyOffsetEncoder(torch.nn.Module): 
+    def __init__(self, *args, **kwargs): 
+        super().__init__(*args, **kwargs)
+        self.blocks = torch.nn.Sequential(
+            torch.nn.Conv2d(4, 32, kernel_size=3, padding=1, stride=1),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(32, 32, kernel_size=3, padding=1, stride=1),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(64, 64, kernel_size=3, padding=1, stride=1),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(64, 128, kernel_size=3, padding=1, stride=2),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(128, 128, kernel_size=3, padding=1, stride=1),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(128, 256, kernel_size=3, padding=1, stride=2),
+            torch.nn.SiLU(),
+            torch.nn.Conv2d(256, 256, kernel_size=3, padding=1, stride=1),
+            torch.nn.SiLU(),
+            zero_module(torch.nn.Conv2d(256, 16, kernel_size=3, padding=1, stride=1)),
+        )
+    def forward(self, x):
+        return self.blocks(x)
+
+
+class UNet1024(torch.nn.Module): 
+    def __init__(
+        self, in_channels: int = 3, out_channels: int = 4, 
+        down_block_types: tuple = ("DownBlock2D", "DownBlock2D", "DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D"),
+        up_block_types: tuple = ("AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D"),
+        block_out_channels: tuple = (32, 32, 64, 128, 256, 512, 512), layers_per_block: int = 2,
+        mid_block_scale_factor: float = 1, downsample_padding: int = 1, downsample_type: str = "conv",
+        upsample_type: str = "conv", dropout: float = 0.0, act_fn: str = "silu",
+        attention_head_dim: int = 8, norm_num_groups: int = 4, 
+        norm_eps: float = 1e-5, latent_c: int = 16,
+    ):
+        super().__init__()
+        self.conv_in = torch.nn.Conv2d(in_channels, block_out_channels[0], kernel_size=3, padding=(1, 1))
+        self.latent_conv_in = zero_module(torch.nn.Conv2d(latent_c, block_out_channels[2], kernel_size=1))
+        self.down_blocks = torch.nn.ModuleList([])
+        self.mid_block = None
+        self.up_blocks = torch.nn.ModuleList([])
+        output_channel = block_out_channels[0]
+        for i, down_block_type in enumerate(down_block_types):
+            input_channel = output_channel
+            output_channel = block_out_channels[i]
+            is_final_block = i == len(block_out_channels) - 1
+            down_block = get_down_block( down_block_type, num_layers=layers_per_block, in_channels=input_channel,
+                out_channels=output_channel, temb_channels=None, add_downsample=not is_final_block, resnet_eps=norm_eps,
+                resnet_act_fn=act_fn, resnet_groups=norm_num_groups, attention_head_dim=attention_head_dim if attention_head_dim is not None else output_channel,
+                downsample_padding=downsample_padding, resnet_time_scale_shift="default", downsample_type=downsample_type, dropout=dropout,
+            )
+            self.down_blocks.append(down_block)
+        self.mid_block = UNetMidBlock2D(
+            in_channels=block_out_channels[-1], temb_channels=None, dropout=dropout, resnet_eps=norm_eps, resnet_act_fn=act_fn,
+            output_scale_factor=mid_block_scale_factor, resnet_time_scale_shift="default",
+            attention_head_dim=attention_head_dim if attention_head_dim is not None else block_out_channels[-1],
+            resnet_groups=norm_num_groups, attn_groups=None, add_attention=True,
+        )
+        reversed_block_out_channels = list(reversed(block_out_channels))
+        output_channel = reversed_block_out_channels[0]
+        for i, up_block_type in enumerate(up_block_types):
+            prev_output_channel = output_channel
+            output_channel = reversed_block_out_channels[i]
+            input_channel = reversed_block_out_channels[min(i + 1, len(block_out_channels) - 1)]
+            is_final_block = i == len(block_out_channels) - 1
+            up_block = get_up_block(
+                up_block_type, num_layers=layers_per_block + 1, in_channels=input_channel, out_channels=output_channel,
+                prev_output_channel=prev_output_channel, temb_channels=None, add_upsample=not is_final_block,
+                resnet_eps=norm_eps, resnet_act_fn=act_fn, resnet_groups=norm_num_groups,
+                attention_head_dim=attention_head_dim if attention_head_dim is not None else output_channel,
+                resnet_time_scale_shift="default", upsample_type=upsample_type, dropout=dropout,
+            )
+            self.up_blocks.append(up_block)
+            prev_output_channel = output_channel
+        self.conv_norm_out = torch.nn.GroupNorm(num_channels=block_out_channels[0], num_groups=norm_num_groups, eps=norm_eps)
+        self.conv_act = torch.nn.SiLU()
+        self.conv_out = torch.nn.Conv2d(block_out_channels[0], out_channels, kernel_size=3, padding=1)
+
+    def forward(self, x, latent):
+        sample_latent = self.latent_conv_in(latent)
+        sample = self.conv_in(x)
+        emb = None
+        down_block_res_samples = (sample,)
+        for i, downsample_block in enumerate(self.down_blocks):
+            if i == 3: sample = sample + sample_latent
+            sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
+            down_block_res_samples += res_samples
+        sample = self.mid_block(sample, emb)
+        for upsample_block in self.up_blocks:
+            res_samples = down_block_res_samples[-len(upsample_block.resnets) :]
+            down_block_res_samples = down_block_res_samples[: -len(upsample_block.resnets)]
+            sample = upsample_block(sample, res_samples, emb)
+        sample = self.conv_norm_out(sample)
+        sample = self.conv_act(sample)
+        sample = self.conv_out(sample)
+        return sample
+
+
+class FluxTransparentVAE(torch.nn.Module): 
+    def __init__(self, dtype=torch.float32, alpha=300.0):
+        super().__init__()
+        self.dtype = dtype
+
+        self.encoder = LatentTransparencyOffsetEncoder()
+        # self.encoder.to(dtype=self.dtype)
+        self.alpha = alpha
+        self.decoder = UNet1024()
+        # self.decoder.to(dtype=self.dtype)
+
+
+    def decode(self, origin_pixel, latent):
+        latent_for_decoder = latent.to('cuda', dtype=self.dtype)
+        origin_pixel_for_decoder = origin_pixel.to('cuda', dtype=self.dtype)
+        y = self.decoder(origin_pixel_for_decoder, latent_for_decoder)
+        return y.clamp(0,1)
+##  End: Flux transparent VAE
+
+
 class forgeMultiPrompt(scripts.Script):
     sorting_priority = 0
-    
+
     glc_backup_flux = None
     glc_backup_sdxl = None
     glc_backup_sd3 = None
@@ -33,7 +160,7 @@ class forgeMultiPrompt(scripts.Script):
     sigmasBackup = None
     prediction_typeBackup = None
     text_encoder_device_backup = None
-    
+
     flux_use_T5 = True
     flux_use_CL = True
     SDXL_use_CL = True
@@ -41,6 +168,8 @@ class forgeMultiPrompt(scripts.Script):
     SD3_use_CL = True
     SD3_use_CG = True
     SD3_use_T5 = True
+
+    transparentVAE = None
 
     def __init__(self):
         if forgeMultiPrompt.glc_backup_flux is None:
@@ -127,16 +256,15 @@ class forgeMultiPrompt(scripts.Script):
             else:
                 cond_t5 = torch.zeros([np, 256, 4096])
 
-        #   conds get concatenated later, so sizes of dimension 1 must match
+        #   conds get concatenated later, in dimension 2, so sizes of dimension 1 must match
         #   padding with zero
         pad = cond_g.size(1) - cond_l.size(1)
-        if pad > 1:
+        if pad > 0:
             padding = (0,0, 0, pad, 0,0)
             cond_l = torch.nn.functional.pad (cond_l, padding, mode='constant', value=0)
-        elif pad < 1:
+        elif pad < 0:
             padding = (0,0, 0, -pad, 0,0)
             cond_g = torch.nn.functional.pad (cond_g, padding, mode='constant', value=0)
-
 
         cond_lg = torch.cat([cond_l, cond_g.to(cond_l.device)], dim=-1)
         cond_lg = torch.nn.functional.pad(cond_lg, (0, 4096 - cond_lg.shape[-1]))
@@ -167,6 +295,7 @@ class forgeMultiPrompt(scripts.Script):
             cond_t5 = self.text_processing_engine_t5(prompt)
         else:
             cond_t5 = torch.zeros([np, 256, 4096])
+
         cond = dict(crossattn=cond_t5, vector=pooled_l)
 
         if self.use_distilled_cfg_scale:
@@ -199,13 +328,13 @@ class forgeMultiPrompt(scripts.Script):
             cond_g = torch.zeros([np, 77, 1280])
             clip_pooled = torch.zeros([np, 1280])
 
-        #   conds get concatenated later, so sizes of dimension 1 must match
+        #   conds get concatenated later, in dimension 2, so sizes of dimension 1 must match
         #   padding with zero
         pad = cond_g.size(1) - cond_l.size(1)
-        if pad > 1:
+        if pad > 0:
             padding = (0,0, 0, pad, 0,0)
             cond_l = torch.nn.functional.pad (cond_l, padding, mode='constant', value=0)
-        elif pad < 1:
+        elif pad < 0:
             padding = (0,0, 0, -pad, 0,0)
             cond_g = torch.nn.functional.pad (cond_g, padding, mode='constant', value=0)
 
@@ -251,7 +380,10 @@ class forgeMultiPrompt(scripts.Script):
         with InputAccordion(False, label=self.title()) as enabled:
 
             with gradio.Row():
-                _ = gradio.Markdown(show_label=False, value='### multi-prompt (SDXL, SD3, Flux) separator keyword: **SPLIT** ###')
+                _ = gradio.Markdown("""
+                    ### multi-prompt (SDXL, SD3, Flux)
+                    ### separator keyword: **SPLIT**
+                """)
                 prediction_type = gradio.Dropdown(label='Set model prediction type', choices=['default', 'epsilon', 'const', 'v_prediction', 'edm'], value='default', type='value')
 
             with gradio.Accordion(label="FluxTools", open=False):
@@ -349,6 +481,12 @@ class forgeMultiPrompt(scripts.Script):
                 swap42.click(fn=redux_swap, inputs=swap_4+swap_2, outputs=swap_4+swap_2)
                 swap43.click(fn=redux_swap, inputs=swap_4+swap_3, outputs=swap_4+swap_3)
 
+            with InputAccordion(False, label="Flux Transparent VAE") as transparent_vae:
+                _ = gradio.Markdown("""
+                    * include the Flux LayerDiffuse LoRA in the prompt
+                    * transparent VAE must be located in the models directory as `models/TransparentVAE.pth`
+                    * download from https://huggingface.co/RedAIGC/Flux-version-LayerDiffuse/
+                """)
 
             with gradio.Accordion('Shift for Flux and SD3', open=False):
                 with gradio.Row():
@@ -420,12 +558,12 @@ class forgeMultiPrompt(scripts.Script):
         SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
         SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
 
-        return enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image.background, fill_image.foreground, use_flex2, flex2_image.background, flex2_image.foreground, flex2_control, flex2_strength, flex2_time
+        return enabled, transparent_vae, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image.background, fill_image.foreground, use_flex2, flex2_image.background, flex2_image.foreground, flex2_control, flex2_strength, flex2_time
 
     def after_extra_networks_activate(self, p, *script_args, **kwargs):
         enabled = script_args[0]
         if enabled:
-            te_device = script_args[5]
+            te_device = script_args[6]
             match te_device:
                 case "gpu-2":
                     memory_management.text_encoder_device = forgeMultiPrompt.patched_text_encoder_gpu2
@@ -437,7 +575,7 @@ class forgeMultiPrompt(scripts.Script):
                     pass
 
     def process(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
+        enabled, transparent_vae, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
         if forgeMultiPrompt.clearConds == True:
@@ -496,12 +634,9 @@ class forgeMultiPrompt(scripts.Script):
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
-        enabled, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
+        enabled, transparent_vae, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
         if enabled:
             # print (shared.sd_model.model_config.unet_config)
-
-            if params.iteration > 0:
-                return
 
             if not hasattr(shared.sd_model.model_config.unet_config, 'depth') or shared.sd_model.model_config.unet_config['depth'] != 8:
                 use_flex2 = False
@@ -534,6 +669,10 @@ class forgeMultiPrompt(scripts.Script):
                         forgeMultiPrompt.sigmasBackup = shared.sd_model.forge_objects.unet.model.predictor.sigmas
                     ts = sigma((torch.arange(1, 10000 + 1, 1) / 10000), thisShift, dynamic)
                     shared.sd_model.forge_objects.unet.model.predictor.sigmas = ts
+
+            if params.iteration > 0:    # batch count
+                # FluxTools setup done on iteration 0
+                return
 
             if not params.sd_model.is_webui_legacy_model():
                 x = kwargs['x']
@@ -698,14 +837,6 @@ class forgeMultiPrompt(scripts.Script):
         return
 
 
-#    def postprocess_batch(self, params, *args, **kwargs):
-#        enabled = args[0]
-#        if enabled:
-#            remove_current_script_callbacks()
-#
-#        return
-
-
     def postprocess(self, params, processed, *args):
         enabled = args[0]
         if enabled:
@@ -760,5 +891,50 @@ class forgeMultiPrompt(scripts.Script):
                 mask = TF.gaussian_blur(mask.filter(ImageFilter.MaxFilter(dilation_size)), dilation_size)
 
                 pp.image = Image.composite(pp.image, image, mask)
+
+        return
+
+
+    def post_sample (self, params, ps, *args):
+        enabled = args[0]
+        t_vae = args[1]
+        if enabled and t_vae and not shared.sd_model.is_webui_legacy_model():
+            forgeMultiPrompt.samples = ps.samples
+
+        return
+
+
+    def postprocess_batch(self, params, *args, **kwargs):
+        enabled = args[0]
+        t_vae = args[1]
+        if enabled and t_vae and not shared.sd_model.is_webui_legacy_model():
+            if forgeMultiPrompt.transparentVAE is None:
+                forgeMultiPrompt.transparentVAE = FluxTransparentVAE(dtype=torch.float32)
+                forgeMultiPrompt.transparentVAE.load_state_dict(torch.load('models/TransparentVAE.pth'), strict=False)
+                forgeMultiPrompt.transparentVAE.eval()
+                
+            forgeMultiPrompt.transparentVAE.cuda()
+
+            rgb = kwargs['images']
+            
+            image_count = len(rgb)
+            for i in range(image_count):
+                print (f"Flux Transparent VAE {i+1}/{image_count}", end="\r", flush=True)
+                rgba = forgeMultiPrompt.transparentVAE.decode(rgb[i].unsqueeze(0), forgeMultiPrompt.samples[i:i+1, ...]).squeeze(0).cpu().numpy()
+                
+                rgba = 255.0 * numpy.moveaxis(rgba, 0, 2)
+                rgba = rgba.round().astype(numpy.uint8)
+
+                params.extra_result_images.append(rgba)
+                
+                info = f"{params.all_prompts[i]}\nNegative prompt: {params.all_negative_prompts[i]}\nSeed: {params.seeds[i]}, Steps: {params.steps}, CFG Scale: {params.cfg_scale}, Distilled CFG Scale: {params.distilled_cfg_scale}, Size: {params.width}x{params.height}, Sampler: {params.sampler_name}, Scheduler: {params.scheduler}, Model: {params.sd_model_name}"
+                
+                images.save_image(Image.fromarray(rgba, mode="RGBA"), params.outpath_samples, "", 0, "", "png", info=info, p=params, suffix="-transparent")
+                del rgba
+
+            print (f"Flux Transparent VAE done  ", end="\r", flush=True)
+            forgeMultiPrompt.samples = None
+            forgeMultiPrompt.transparentVAE.cpu()
+            torch.cuda.empty_cache()
 
         return
