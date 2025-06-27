@@ -740,7 +740,6 @@ class forgeMultiPrompt(scripts.Script):
                         mask = mask.reshape(1, 64, h, w)
 
                         latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
-                        mask = images_tensor_to_samples(mask, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
 
                         forgeMultiPrompt.latent = torch.cat([latent, mask.to(latent.device)], dim=1)
 
