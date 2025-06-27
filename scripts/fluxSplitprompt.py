@@ -18,7 +18,6 @@ from modules.sd_samplers_common import images_tensor_to_samples, approximation_i
 from modules_forge.forge_canvas.canvas import ForgeCanvas
 from PIL import Image, ImageFilter
 
-from backend import memory_management
 from modules_forge import main_entry
 
 
