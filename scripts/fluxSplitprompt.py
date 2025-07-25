@@ -17,6 +17,7 @@ from modules.script_callbacks import on_cfg_denoiser, remove_current_script_call
 from modules.sd_samplers_common import images_tensor_to_samples, approximation_indexes
 from modules_forge.forge_canvas.canvas import ForgeCanvas
 from PIL import Image, ImageFilter
+from modules.api.api import decode_base64_to_image
 
 from modules_forge import main_entry
 
@@ -682,6 +683,8 @@ class forgeMultiPrompt(scripts.Script):
                         flex_latent = torch.zeros([1, 16, h, w])
                         flex_mask = torch.ones([1, 1, h, w])
                     else:
+                        if isinstance (flex2_image, str):
+                            flex2_image = decode_base64_to_image(flex2_image)
                         image = flex2_image.convert('RGB').resize((w*8, h*8))
                         image = numpy.array(image) / 255.0
                         image = numpy.transpose(image, (2, 0, 1))
@@ -701,6 +704,8 @@ class forgeMultiPrompt(scripts.Script):
                         forgeMultiPrompt.start = 0.0
                         forgeMultiPrompt.end = 1.0
                     else:
+                        if isinstance (flex2_control, str):
+                            flex2_control = decode_base64_to_image(flex2_control)
                         control_image = flex2_control.resize((w*8, h*8))
                         control_image = numpy.array(control_image) / 255.0
                         control_image = numpy.transpose(control_image, (2, 0, 1))
@@ -715,6 +720,11 @@ class forgeMultiPrompt(scripts.Script):
 
                 else:   # FluxTools
                     if (fill_image is not None and fill_mask is not None):
+                        if isinstance (fill_image, str):
+                            fill_image = decode_base64_to_image(fill_image)
+                        if isinstance (fill_mask, str):
+                            fill_mask = decode_base64_to_image(fill_mask)
+
                         mask_A = fill_mask.getchannel('A').convert('L')
                         mask_A_I = mask_A.point(lambda v: 0 if v > 128 else 255)
                         mask_A = mask_A.point(lambda v: 255 if v > 128 else 0)
@@ -748,6 +758,8 @@ class forgeMultiPrompt(scripts.Script):
                         forgeMultiPrompt.end = 1.0
                         forgeMultiPrompt.strength = 1.0
                     elif control_image and control_strength > 0:
+                        if isinstance (control_image, str):
+                            control_image = decode_base64_to_image(control_image)
                         image = control_image.resize((w*8, h*8))
                         image = numpy.array(image) / 255.0
                         image = numpy.transpose(image, (2, 0, 1))
@@ -781,6 +793,8 @@ class forgeMultiPrompt(scripts.Script):
                         if redux_images[i] is None or redux_strengths[i] == 0:
                             continue
 
+                        if isinstance (redux_images[i], str):
+                            redux_images[i] = decode_base64_to_image(redux_images[i])
                         image = feature.preprocess(
                             images=redux_images[i], do_resize=True, return_tensors="pt", do_convert_rgb=True
                         )
@@ -879,6 +893,11 @@ class forgeMultiPrompt(scripts.Script):
                 fill_image = args[-8]
                 fill_mask = args[-7]
             if fill_image is not None and fill_mask is not None:
+                if isinstance (fill_image, str):
+                    fill_image = decode_base64_to_image(fill_image)
+                if isinstance (fill_mask, str):
+                    fill_mask = decode_base64_to_image(fill_mask)
+
                 w = pp.image.size[0]
                 h = pp.image.size[1]
                 image = fill_image.resize((w, h))
