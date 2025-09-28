@@ -160,6 +160,7 @@ class forgeMultiPrompt(scripts.Script):
     sigmasBackup = None
     prediction_typeBackup = None
     text_encoder_device_backup = None
+    text_encoder_offload_device_backup = None
 
     flux_use_T5 = True
     flux_use_CL = True
@@ -180,6 +181,7 @@ class forgeMultiPrompt(scripts.Script):
             forgeMultiPrompt.glc_backup_sd3 = StableDiffusion3.get_learned_conditioning
         if forgeMultiPrompt.text_encoder_device_backup is None:
             forgeMultiPrompt.text_encoder_device_backup = memory_management.text_encoder_device
+            forgeMultiPrompt.text_encoder_offload_device_backup = memory_management.text_encoder_offload_device
 
     def splitPrompt (prompt, countTextEncoders):
         promptTE1 = []
@@ -210,11 +212,16 @@ class forgeMultiPrompt(scripts.Script):
 
         return promptTE1, promptTE2, promptTE3
 
+    def patched_text_encoder_offload():
+        if torch.cuda.device_count() > 1:
+            return torch.device("cuda:1")
+        else:
+            return forgeMultiPrompt.text_encoder_offload_device_backup()
     def patched_text_encoder_gpu2():
         if torch.cuda.device_count() > 1:
             return torch.device("cuda:1")
         else:
-            return torch.cuda.current_device()
+            return forgeMultiPrompt.text_encoder_device_backup()
     def patched_text_encoder_gpu():
         return torch.cuda.current_device()#torch.device("cuda")
     def patched_text_encoder_cpu():
@@ -251,7 +258,7 @@ class forgeMultiPrompt(scripts.Script):
                 cond_l = torch.zeros([np, 77, 768])
                 l_pooled = torch.zeros([np, 768])
 
-            if forgeMultiPrompt.SD3_use_T5 and shared.opts.sd3_enable_t5:
+            if forgeMultiPrompt.SD3_use_T5 and getattr(shared.opts, 'sd3_enable_t5', True):
                 cond_t5 = self.text_processing_engine_t5(T5prompt)
             else:
                 cond_t5 = torch.zeros([np, 256, 4096])
@@ -497,7 +504,7 @@ class forgeMultiPrompt(scripts.Script):
                     maxHR = gradio.Slider(label='HighRes Max Shift - 0: no change', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
 
             with gradio.Accordion('Text encoders control', open=False):
-                te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default")
+                te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default", info="note: gpu-2 uses default behaviour if there isn't a second CUDA device. gpu-2 also uses same device for offload.")
                 with gradio.Row(visible=(StableDiffusion3 is not None)):
                     SD3_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_T5, label="SD3: use T5")
                     SD3_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CL, label="SD3: use CLIP-L")
@@ -567,6 +574,7 @@ class forgeMultiPrompt(scripts.Script):
             match te_device:
                 case "gpu-2":
                     memory_management.text_encoder_device = forgeMultiPrompt.patched_text_encoder_gpu2
+                    memory_management.text_encoder_offload_device = forgeMultiPrompt.patched_text_encoder_offload
                 case "gpu":
                     memory_management.text_encoder_device = forgeMultiPrompt.patched_text_encoder_gpu
                 case "cpu":
@@ -860,6 +868,7 @@ class forgeMultiPrompt(scripts.Script):
                 Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
 
             memory_management.text_encoder_device = forgeMultiPrompt.text_encoder_device_backup
+            memory_management.text_encoder_offload_device = forgeMultiPrompt.text_encoder_offload_device_backup
 
             if forgeMultiPrompt.sigmasBackup != None:
                 shared.sd_model.forge_objects.unet.model.predictor.sigmas = forgeMultiPrompt.sigmasBackup
