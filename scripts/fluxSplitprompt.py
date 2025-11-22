@@ -1,14 +1,15 @@
 from backend import memory_management
+from backend.modules.k_prediction import PredictionFlux, PredictionDiscreteFlow
+
 from backend.diffusion_engine.flux import Flux
 from backend.diffusion_engine.sdxl import StableDiffusionXL
-try:
-    from backend.diffusion_engine.sd35 import StableDiffusion3
-except:
-    StableDiffusion3 = None
+from backend.diffusion_engine.sd35 import StableDiffusion3
 
 import gradio
 from gradio_rangeslider import RangeSlider
-import torch, math, numpy
+import torch
+import math
+import numpy
 import torchvision.transforms.functional as TF
 
 from modules import scripts, shared, images
@@ -19,19 +20,17 @@ from modules_forge.forge_canvas.canvas import ForgeCanvas
 from PIL import Image, ImageFilter
 from modules.api.api import decode_base64_to_image
 
-from modules_forge import main_entry
-
 
 ##  Flux transparent VAE - from https://github.com/RedAIGC/Flux-version-LayerDiffuse
-from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block 
+from diffusers.models.unets.unet_2d_blocks import UNetMidBlock2D, get_down_block, get_up_block
 
-def zero_module(module): 
+def zero_module(module):
     for p in module.parameters():
         p.detach().zero_()
     return module
 
-class LatentTransparencyOffsetEncoder(torch.nn.Module): 
-    def __init__(self, *args, **kwargs): 
+class LatentTransparencyOffsetEncoder(torch.nn.Module):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.blocks = torch.nn.Sequential(
             torch.nn.Conv2d(4, 32, kernel_size=3, padding=1, stride=1),
@@ -56,15 +55,15 @@ class LatentTransparencyOffsetEncoder(torch.nn.Module):
         return self.blocks(x)
 
 
-class UNet1024(torch.nn.Module): 
+class UNet1024(torch.nn.Module):
     def __init__(
-        self, in_channels: int = 3, out_channels: int = 4, 
+        self, in_channels: int = 3, out_channels: int = 4,
         down_block_types: tuple = ("DownBlock2D", "DownBlock2D", "DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D", "AttnDownBlock2D"),
         up_block_types: tuple = ("AttnUpBlock2D", "AttnUpBlock2D", "AttnUpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D"),
         block_out_channels: tuple = (32, 32, 64, 128, 256, 512, 512), layers_per_block: int = 2,
         mid_block_scale_factor: float = 1, downsample_padding: int = 1, downsample_type: str = "conv",
         upsample_type: str = "conv", dropout: float = 0.0, act_fn: str = "silu",
-        attention_head_dim: int = 8, norm_num_groups: int = 4, 
+        attention_head_dim: int = 8, norm_num_groups: int = 4,
         norm_eps: float = 1e-5, latent_c: int = 16,
     ):
         super().__init__()
@@ -116,7 +115,8 @@ class UNet1024(torch.nn.Module):
         emb = None
         down_block_res_samples = (sample,)
         for i, downsample_block in enumerate(self.down_blocks):
-            if i == 3: sample = sample + sample_latent
+            if i == 3:
+                sample = sample + sample_latent
             sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
             down_block_res_samples += res_samples
         sample = self.mid_block(sample, emb)
@@ -130,7 +130,7 @@ class UNet1024(torch.nn.Module):
         return sample
 
 
-class FluxTransparentVAE(torch.nn.Module): 
+class FluxTransparentVAE(torch.nn.Module):
     def __init__(self, dtype=torch.float32, alpha=300.0):
         super().__init__()
         self.dtype = dtype
@@ -177,7 +177,7 @@ class forgeMultiPrompt(scripts.Script):
             forgeMultiPrompt.glc_backup_flux = Flux.get_learned_conditioning
         if forgeMultiPrompt.glc_backup_sdxl is None:
             forgeMultiPrompt.glc_backup_sdxl = StableDiffusionXL.get_learned_conditioning
-        if forgeMultiPrompt.glc_backup_sd3 is None and StableDiffusion3 is not None:
+        if forgeMultiPrompt.glc_backup_sd3 is None:
             forgeMultiPrompt.glc_backup_sd3 = StableDiffusion3.get_learned_conditioning
         if forgeMultiPrompt.text_encoder_device_backup is None:
             forgeMultiPrompt.text_encoder_device_backup = memory_management.text_encoder_device
@@ -190,7 +190,7 @@ class forgeMultiPrompt(scripts.Script):
 
         for p in prompt:
             splitPrompt = p.split('SPLIT')
-            
+
             countSplits = min (countTextEncoders, len(splitPrompt))
             match countSplits:
                 case 3:         #   sd3
@@ -251,7 +251,7 @@ class forgeMultiPrompt(scripts.Script):
             else:
                 cond_g = torch.zeros([np, 77, 1280])
                 g_pooled = torch.zeros([np, 1280])
-            
+
             if forgeMultiPrompt.SD3_use_CL:
                 cond_l, l_pooled = self.text_processing_engine_l(CLIPLprompt)
             else:
@@ -297,7 +297,7 @@ class forgeMultiPrompt(scripts.Script):
             cond_l, pooled_l = self.text_processing_engine_l(CLIPprompt)
         else:
             pooled_l = torch.zeros([np, 768])
-            
+
         if forgeMultiPrompt.flux_use_T5:
             cond_t5 = self.text_processing_engine_t5(prompt)
         else:
@@ -323,12 +323,12 @@ class forgeMultiPrompt(scripts.Script):
 
         #   make 2 prompt lists, split each prompt in original list based on 'SPLIT'
         CLIPLprompt, CLIPGprompt, _ = forgeMultiPrompt.splitPrompt (prompt, 2)
-        
+
         if forgeMultiPrompt.SDXL_use_CL:
             cond_l = self.text_processing_engine_l(CLIPLprompt)
         else:
             cond_l = torch.zeros([np, 77, 768])
-            
+
         if forgeMultiPrompt.SDXL_use_CG:
             cond_g, clip_pooled = self.text_processing_engine_g(CLIPGprompt)
         else:
@@ -436,7 +436,7 @@ class forgeMultiPrompt(scripts.Script):
                             swap21 = gradio.Button("swap redux 2 and 1")
                             swap23 = gradio.Button("swap redux 2 and 3")
                             swap24 = gradio.Button("swap redux 2 and 4")
-                        
+
                 with gradio.Tab("Redux-3", id="F2E_FT_r3"):
                     gradio.Markdown("Multiple images can be used for Redux.")
                     gradio.Markdown("Select an image to use for Redux.")
@@ -466,12 +466,12 @@ class forgeMultiPrompt(scripts.Script):
 
                 def redux_swap(imageA, strA, timeA, imageB, strB, timeB):
                     return imageB, strB, timeB, imageA, strA, timeA
-                    
+
                 swap_1 = [redux_image1, redux_str1, redux_time1]
                 swap_2 = [redux_image2, redux_str2, redux_time2]
                 swap_3 = [redux_image3, redux_str3, redux_time3]
                 swap_4 = [redux_image4, redux_str4, redux_time4]
-                
+
                 swap12.click(fn=redux_swap, inputs=swap_1+swap_2, outputs=swap_1+swap_2)
                 swap13.click(fn=redux_swap, inputs=swap_1+swap_3, outputs=swap_1+swap_3)
                 swap14.click(fn=redux_swap, inputs=swap_1+swap_4, outputs=swap_1+swap_4)
@@ -505,7 +505,7 @@ class forgeMultiPrompt(scripts.Script):
 
             with gradio.Accordion('Text encoders control', open=False):
                 te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default", info="note: gpu-2 uses default behaviour if there isn't a second CUDA device. gpu-2 also uses same device for offload.")
-                with gradio.Row(visible=(StableDiffusion3 is not None)):
+                with gradio.Row():
                     SD3_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_T5, label="SD3: use T5")
                     SD3_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CL, label="SD3: use CLIP-L")
                     SD3_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CG, label="SD3: use CLIP-G")
@@ -556,14 +556,14 @@ class forgeMultiPrompt(scripts.Script):
         def clearCondCache ():
             forgeMultiPrompt.clearConds = True
 
-        enabled.change     (fn=clearCondCache, inputs=None, outputs=None)
-        flux_use_T5.change (fn=clearCondCache, inputs=None, outputs=None)
-        flux_use_CL.change (fn=clearCondCache, inputs=None, outputs=None)
-        SDXL_use_CL.change (fn=clearCondCache, inputs=None, outputs=None)
-        SDXL_use_CG.change (fn=clearCondCache, inputs=None, outputs=None)
-        SD3_use_CL.change  (fn=clearCondCache, inputs=None, outputs=None)
-        SD3_use_CG.change  (fn=clearCondCache, inputs=None, outputs=None)
-        SD3_use_T5.change  (fn=clearCondCache, inputs=None, outputs=None)
+        enabled.input     (fn=clearCondCache, inputs=None, outputs=None)
+        flux_use_T5.input (fn=clearCondCache, inputs=None, outputs=None)
+        flux_use_CL.input (fn=clearCondCache, inputs=None, outputs=None)
+        SDXL_use_CL.input (fn=clearCondCache, inputs=None, outputs=None)
+        SDXL_use_CG.input (fn=clearCondCache, inputs=None, outputs=None)
+        SD3_use_CL.input  (fn=clearCondCache, inputs=None, outputs=None)
+        SD3_use_CG.input  (fn=clearCondCache, inputs=None, outputs=None)
+        SD3_use_T5.input  (fn=clearCondCache, inputs=None, outputs=None)
 
         return enabled, transparent_vae, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image.background, fill_image.foreground, use_flex2, flex2_image.background, flex2_image.foreground, flex2_control, flex2_strength, flex2_time
 
@@ -586,7 +586,7 @@ class forgeMultiPrompt(scripts.Script):
         enabled, transparent_vae, shift, max, shiftHR, maxHR, te_device, prediction_type, flux_use_T5, flux_use_CL, SDXL_use_CL, SDXL_use_CG, SD3_use_CL, SD3_use_CG, SD3_use_T5, control_image, control_strength, control_time, redux_image1, redux_image2, redux_image3, redux_image4, redux_str1, redux_str2, redux_str3, redux_str4, redux_time1, redux_time2, redux_time3, redux_time4, fill_image, fill_mask, use_flex2, flex2_image, flex2_mask, flex2_control, flex2_strength, flex2_time = script_args
 
         #   clear conds if usage has changed - must do this even if extension has been disabled
-        if forgeMultiPrompt.clearConds == True:
+        if forgeMultiPrompt.clearConds:
             params.clear_prompt_cache()
             forgeMultiPrompt.clearConds = False
 
@@ -598,21 +598,33 @@ class forgeMultiPrompt(scripts.Script):
             forgeMultiPrompt.SD3_use_CL  = SD3_use_CL
             forgeMultiPrompt.SD3_use_CG  = SD3_use_CG
             forgeMultiPrompt.SD3_use_T5  = SD3_use_T5
-            
+
             params.extra_generation_params.update({
                 "fmp_enabled"   :   enabled,
                 "fmp_te_device" :   te_device,
             })
-            
-            isMPModel = not ((params.sd_model.is_sd1 == True) or (params.sd_model.is_sd2 == True))
+
+            if isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionFlux) or isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionDiscreteFlow):
+                if shift > 0.0:
+                    params.extra_generation_params.update({
+                        "fmp_shift"     :   shift,
+                        "fmp_max"       :   max,
+                    })
+                if shiftHR > 0.0:
+                    params.extra_generation_params.update({
+                        "fmp_shiftHR"   :   shiftHR,
+                        "fmp_maxHR"     :   maxHR,
+                    })
+
+            isMPModel = not (params.sd_model.is_sd1 or params.sd_model.is_sd2)
             if isMPModel:
-                if params.sd_model.is_sdxl == True:
+                if params.sd_model.is_sdxl:
                     StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
                     params.extra_generation_params.update({
                         "fmp_sdxlCL"    :   SDXL_use_CL,
                         "fmp_sdxlCG"    :   SDXL_use_CG,
                     })
-                elif params.sd_model.is_sd3 == True:
+                elif params.sd_model.is_sd3:
                     StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.patched_glc_sd3
                     params.extra_generation_params.update({
                         "fmp_sd3CL"    :   SD3_use_CL,
@@ -622,10 +634,6 @@ class forgeMultiPrompt(scripts.Script):
                 else:
                     Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
                     params.extra_generation_params.update({
-                        "fmp_shift"     :   shift,
-                        "fmp_max"       :   max,
-                        "fmp_shiftHR"   :   shiftHR,
-                        "fmp_maxHR"     :   maxHR,
                         "fmp_fluxT5"    :   flux_use_T5,
                         "fmp_fluxCL"    :   flux_use_CL,
                     })
@@ -638,7 +646,6 @@ class forgeMultiPrompt(scripts.Script):
                     "fmp_prediction"     :   prediction_type,
                 })
 
-
         return
 
     def process_before_every_sampling(self, params, *script_args, **kwargs):
@@ -649,11 +656,7 @@ class forgeMultiPrompt(scripts.Script):
             if not hasattr(shared.sd_model.model_config.unet_config, 'depth') or shared.sd_model.model_config.unet_config['depth'] != 8:
                 use_flex2 = False
 
-            if not shared.sd_model.is_webui_legacy_model() or params.sd_model.is_sd3:
-                # fullfatFlux = False
-                # if not fullfatFlux:
-                    ##shared.sd_model.model_config.unet_config['depth'] = 8 # Flex, reduced to 8 double blocks
-                    # shared.sd_model.forge_objects.unet.model.diffusion_model.double_blocks = shared.sd_model.forge_objects.unet.model.diffusion_model.double_blocks[0:8]
+            if isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionFlux) or isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionDiscreteFlow):
 
                 def sigma (timestep, s, d):
                     if d > 0.0:
@@ -703,7 +706,7 @@ class forgeMultiPrompt(scripts.Script):
                         mask_A = mask_A.resize((w, h))
                         mask_A = numpy.array(mask_A) / 255.0
                         flex_mask = torch.tensor(mask_A).unsqueeze(0).unsqueeze(0)
-                        
+
                         flex_latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
                         flex_latent *= (1.0 - flex_mask.to(flex_latent.device))
 
@@ -761,7 +764,7 @@ class forgeMultiPrompt(scripts.Script):
                         forgeMultiPrompt.latent = torch.cat([latent, mask.to(latent.device)], dim=1)
 
                         del latent, image, mask
-                        
+
                         forgeMultiPrompt.start = 0.0
                         forgeMultiPrompt.end = 1.0
                         forgeMultiPrompt.strength = 1.0
@@ -776,13 +779,12 @@ class forgeMultiPrompt(scripts.Script):
                         latent = images_tensor_to_samples(image, approximation_indexes.get(shared.opts.sd_vae_encode_method), params.sd_model)
                         forgeMultiPrompt.latent = latent
                         del image
-                        
+
                         forgeMultiPrompt.start = control_time[0]
                         forgeMultiPrompt.end = control_time[1]
                         forgeMultiPrompt.strength = control_strength
                     else:
                         forgeMultiPrompt.latent = None
-
 
                 redux_images = [redux_image1, redux_image2, redux_image3, redux_image4]
                 redux_strengths = [redux_str1, redux_str2, redux_str3, redux_str4]
@@ -806,9 +808,9 @@ class forgeMultiPrompt(scripts.Script):
                         image = feature.preprocess(
                             images=redux_images[i], do_resize=True, return_tensors="pt", do_convert_rgb=True
                         )
-                        
+
                         image_enc_hidden_states = encoder(**image).last_hidden_state
-                        
+
                         embeds.append((redux_strengths[i] * embedder(image_enc_hidden_states).image_embeds, redux_times[i][0], redux_times[i][1]))
                         del image_enc_hidden_states
 
@@ -821,7 +823,7 @@ class forgeMultiPrompt(scripts.Script):
                 def apply_control(self):
                     lastStep = self.total_sampling_steps - 1
                     thisStep = self.sampling_step
-                    
+
                     if forgeMultiPrompt.image_embeds is not None:
                         embeds = forgeMultiPrompt.image_embeds
                         cond = self.text_cond["crossattn"]
@@ -832,7 +834,7 @@ class forgeMultiPrompt(scripts.Script):
                                 image_embeds *= (256 / 729) #?hmm, scale down to give prompt a chance
                                                             # 256 could be cond.shape[1]
                                                             # 729 could be image_embeds.shape[1]
-                                
+
                                 cond = torch.cat([cond, image_embeds.to(cond.device)], dim=1)
                                 #or blend?
 
@@ -860,9 +862,9 @@ class forgeMultiPrompt(scripts.Script):
     def postprocess(self, params, processed, *args):
         enabled = args[0]
         if enabled:
-            if params.sd_model.is_sdxl == True:
+            if params.sd_model.is_sdxl:
                 StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.glc_backup_sdxl
-            elif params.sd_model.is_sd3 == True:
+            elif params.sd_model.is_sd3:
                 StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.glc_backup_sd3
             elif not shared.sd_model.is_webui_legacy_model():
                 Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
@@ -870,11 +872,11 @@ class forgeMultiPrompt(scripts.Script):
             memory_management.text_encoder_device = forgeMultiPrompt.text_encoder_device_backup
             memory_management.text_encoder_offload_device = forgeMultiPrompt.text_encoder_offload_device_backup
 
-            if forgeMultiPrompt.sigmasBackup != None:
+            if forgeMultiPrompt.sigmasBackup is not None:
                 shared.sd_model.forge_objects.unet.model.predictor.sigmas = forgeMultiPrompt.sigmasBackup
                 forgeMultiPrompt.sigmasBackup = None
 
-            if forgeMultiPrompt.prediction_typeBackup != None:
+            if forgeMultiPrompt.prediction_typeBackup is not None:
                 params.sd_model.forge_objects.unet.model.predictor.prediction_type = forgeMultiPrompt.prediction_typeBackup
                 forgeMultiPrompt.prediction_typeBackup = None
 
@@ -938,27 +940,27 @@ class forgeMultiPrompt(scripts.Script):
                 forgeMultiPrompt.transparentVAE = FluxTransparentVAE(dtype=torch.float32)
                 forgeMultiPrompt.transparentVAE.load_state_dict(torch.load('models/TransparentVAE.pth'), strict=False)
                 forgeMultiPrompt.transparentVAE.eval()
-                
+
             forgeMultiPrompt.transparentVAE.cuda()
 
             rgb = kwargs['images']
-            
+
             image_count = len(rgb)
             for i in range(image_count):
                 print (f"Flux Transparent VAE {i+1}/{image_count}", end="\r", flush=True)
                 rgba = forgeMultiPrompt.transparentVAE.decode(rgb[i].unsqueeze(0), forgeMultiPrompt.samples[i:i+1, ...]).squeeze(0).cpu().numpy()
-                
+
                 rgba = 255.0 * numpy.moveaxis(rgba, 0, 2)
                 rgba = rgba.round().astype(numpy.uint8)
 
                 params.extra_result_images.append(rgba)
-                
+
                 info = f"{params.all_prompts[i]}\nNegative prompt: {params.all_negative_prompts[i]}\nSeed: {params.seeds[i]}, Steps: {params.steps}, CFG Scale: {params.cfg_scale}, Distilled CFG Scale: {params.distilled_cfg_scale}, Size: {params.width}x{params.height}, Sampler: {params.sampler_name}, Scheduler: {params.scheduler}, Model: {params.sd_model_name}"
-                
+
                 images.save_image(Image.fromarray(rgba, mode="RGBA"), params.outpath_samples, "", 0, "", "png", info=info, p=params, suffix="-transparent")
                 del rgba
 
-            print (f"Flux Transparent VAE done  ", end="\r", flush=True)
+            print ("Flux Transparent VAE done  ", end="\r", flush=True)
             forgeMultiPrompt.samples = None
             forgeMultiPrompt.transparentVAE.cpu()
             torch.cuda.empty_cache()
