@@ -3,7 +3,10 @@ from backend.modules.k_prediction import PredictionFlux, PredictionDiscreteFlow
 
 from backend.diffusion_engine.flux import Flux
 from backend.diffusion_engine.sdxl import StableDiffusionXL
-from backend.diffusion_engine.sd35 import StableDiffusion3
+try:
+    from backend.diffusion_engine.sd35 import StableDiffusion3
+except:
+    StableDiffusion3 = None
 
 import gradio
 from gradio_rangeslider import RangeSlider
@@ -177,7 +180,7 @@ class forgeMultiPrompt(scripts.Script):
             forgeMultiPrompt.glc_backup_flux = Flux.get_learned_conditioning
         if forgeMultiPrompt.glc_backup_sdxl is None:
             forgeMultiPrompt.glc_backup_sdxl = StableDiffusionXL.get_learned_conditioning
-        if forgeMultiPrompt.glc_backup_sd3 is None:
+        if forgeMultiPrompt.glc_backup_sd3 is None and StableDiffusion3 is not None:
             forgeMultiPrompt.glc_backup_sd3 = StableDiffusion3.get_learned_conditioning
         if forgeMultiPrompt.text_encoder_device_backup is None:
             forgeMultiPrompt.text_encoder_device_backup = memory_management.text_encoder_device
@@ -276,10 +279,20 @@ class forgeMultiPrompt(scripts.Script):
         cond_lg = torch.cat([cond_l, cond_g.to(cond_l.device)], dim=-1)
         cond_lg = torch.nn.functional.pad(cond_lg, (0, 4096 - cond_lg.shape[-1]))
 
-        cond = dict(
-            crossattn=torch.cat([cond_lg, cond_t5.to(cond_l.device)], dim=-2),
-            vector=torch.cat([l_pooled, g_pooled.to(cond_l.device)], dim=-1),
-        )
+        if type(cond_t5) is list:
+            crossattn = []
+            for i in range(len(cond_t5)):
+                ca = torch.cat([cond_lg[i], cond_t5[i]], dim=-2)
+                crossattn.append(ca)
+            cond = dict(
+                crossattn=crossattn,
+                vector=torch.cat([l_pooled, g_pooled.to(cond_l.device)], dim=-1),
+            )
+        else:
+            cond = dict(
+                crossattn=torch.cat([cond_lg, cond_t5.to(cond_l.device)], dim=-2),
+                vector=torch.cat([l_pooled, g_pooled.to(cond_l.device)], dim=-1),
+            )
 
         return cond
 
@@ -388,8 +401,7 @@ class forgeMultiPrompt(scripts.Script):
 
             with gradio.Row():
                 _ = gradio.Markdown("""
-                    ### multi-prompt (SDXL, SD3, Flux)
-                    ### separator keyword: **SPLIT**
+                    ### multi-prompt separator keyword: **SPLIT**
                 """)
                 prediction_type = gradio.Dropdown(label='Set model prediction type', choices=['default', 'epsilon', 'const', 'v_prediction', 'edm'], value='default', type='value')
 
@@ -495,7 +507,7 @@ class forgeMultiPrompt(scripts.Script):
                     * download from https://huggingface.co/RedAIGC/Flux-version-LayerDiffuse/
                 """)
 
-            with gradio.Accordion('Shift for Flux and SD3', open=False):
+            with gradio.Accordion('Shift for Flow models', open=False):
                 with gradio.Row():
                     shift = gradio.Slider(label='Shift - 0: use default.', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
                     max = gradio.Slider(label='Max Shift - 0: non-dynamic', minimum=0.0, maximum=12.0, step=0.01, value=0.0)
@@ -505,7 +517,7 @@ class forgeMultiPrompt(scripts.Script):
 
             with gradio.Accordion('Text encoders control', open=False):
                 te_device = gradio.Radio(label="device for text encoders", choices=["default", "cpu", "gpu", "gpu-2"], value="default", info="note: gpu-2 uses default behaviour if there isn't a second CUDA device. gpu-2 also uses same device for offload.")
-                with gradio.Row():
+                with gradio.Row(visible=(StableDiffusion3 is not None)):
                     SD3_use_T5 = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_T5, label="SD3: use T5")
                     SD3_use_CL = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CL, label="SD3: use CLIP-L")
                     SD3_use_CG = gradio.Checkbox(value=forgeMultiPrompt.SD3_use_CG, label="SD3: use CLIP-G")
@@ -624,7 +636,7 @@ class forgeMultiPrompt(scripts.Script):
                         "fmp_sdxlCL"    :   SDXL_use_CL,
                         "fmp_sdxlCG"    :   SDXL_use_CG,
                     })
-                elif params.sd_model.is_sd3:
+                elif getattr(params.sd_model, 'is_sd3', False):
                     StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.patched_glc_sd3
                     params.extra_generation_params.update({
                         "fmp_sd3CL"    :   SD3_use_CL,
@@ -864,7 +876,7 @@ class forgeMultiPrompt(scripts.Script):
         if enabled:
             if params.sd_model.is_sdxl:
                 StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.glc_backup_sdxl
-            elif params.sd_model.is_sd3:
+            elif getattr(params.sd_model, 'is_sd3', False):
                 StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.glc_backup_sd3
             elif not shared.sd_model.is_webui_legacy_model():
                 Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
