@@ -628,7 +628,7 @@ class forgeMultiPrompt(scripts.Script):
                         "fmp_maxHR"     :   maxHR,
                     })
 
-            isMPModel = not (params.sd_model.is_sd1 or params.sd_model.is_sd2)
+            isMPModel = not (params.sd_model.is_sd1 or getattr(params.sd_model, 'is_sd2', False))
             if isMPModel:
                 if params.sd_model.is_sdxl:
                     StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
@@ -978,3 +978,4 @@ class forgeMultiPrompt(scripts.Script):
             torch.cuda.empty_cache()
 
         return
+
