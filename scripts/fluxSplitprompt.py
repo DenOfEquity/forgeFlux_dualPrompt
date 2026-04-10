@@ -1,6 +1,4 @@
 from backend import memory_management
-from backend.modules.k_prediction import PredictionFlux, PredictionDiscreteFlow
-
 from backend.diffusion_engine.flux import Flux
 from backend.diffusion_engine.sdxl import StableDiffusionXL
 try:
@@ -616,7 +614,7 @@ class forgeMultiPrompt(scripts.Script):
                 "fmp_te_device" :   te_device,
             })
 
-            if isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionFlux) or isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionDiscreteFlow):
+            if hasattr(shared.sd_model.forge_objects.unet.model.predictor, "shift") or hasattr(shared.sd_model.forge_objects.unet.model.predictor, "mu"):
                 if shift > 0.0:
                     params.extra_generation_params.update({
                         "fmp_shift"     :   shift,
@@ -628,27 +626,25 @@ class forgeMultiPrompt(scripts.Script):
                         "fmp_maxHR"     :   maxHR,
                     })
 
-            isMPModel = not (params.sd_model.is_sd1 or getattr(params.sd_model, 'is_sd2', False))
-            if isMPModel:
-                if params.sd_model.is_sdxl:
-                    StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
-                    params.extra_generation_params.update({
-                        "fmp_sdxlCL"    :   SDXL_use_CL,
-                        "fmp_sdxlCG"    :   SDXL_use_CG,
-                    })
-                elif getattr(params.sd_model, 'is_sd3', False):
-                    StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.patched_glc_sd3
-                    params.extra_generation_params.update({
-                        "fmp_sd3CL"    :   SD3_use_CL,
-                        "fmp_sd3CG"    :   SD3_use_CG,
-                        "fmp_sd3T5"    :   SD3_use_T5,
-                    })
-                else:
-                    Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
-                    params.extra_generation_params.update({
-                        "fmp_fluxT5"    :   flux_use_T5,
-                        "fmp_fluxCL"    :   flux_use_CL,
-                    })
+            if params.sd_model.is_sdxl:
+                StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.patched_glc_sdxl
+                params.extra_generation_params.update({
+                    "fmp_sdxlCL"    :   SDXL_use_CL,
+                    "fmp_sdxlCG"    :   SDXL_use_CG,
+                })
+            elif getattr(params.sd_model, 'is_sd3', False):
+                StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.patched_glc_sd3
+                params.extra_generation_params.update({
+                    "fmp_sd3CL"    :   SD3_use_CL,
+                    "fmp_sd3CG"    :   SD3_use_CG,
+                    "fmp_sd3T5"    :   SD3_use_T5,
+                })
+            elif getattr(params.sd_model, 'is_flux', False): # this will also match Chroma, but does not patch Chroma so no harm
+                Flux.get_learned_conditioning = forgeMultiPrompt.patched_glc_flux
+                params.extra_generation_params.update({
+                    "fmp_fluxT5"    :   flux_use_T5,
+                    "fmp_fluxCL"    :   flux_use_CL,
+                })
 
             if prediction_type != 'default':
                 forgeMultiPrompt.prediction_typeBackup = params.sd_model.forge_objects.unet.model.predictor.prediction_type
@@ -668,8 +664,7 @@ class forgeMultiPrompt(scripts.Script):
             if not hasattr(shared.sd_model.model_config.unet_config, 'depth') or shared.sd_model.model_config.unet_config['depth'] != 8:
                 use_flex2 = False
 
-            if isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionFlux) or isinstance(shared.sd_model.forge_objects.unet.model.predictor, PredictionDiscreteFlow):
-
+            if hasattr(shared.sd_model.forge_objects.unet.model.predictor, "shift") or hasattr(shared.sd_model.forge_objects.unet.model.predictor, "mu"):
                 def sigma (timestep, s, d):
                     if d > 0.0:
                         m = (d - shift) / (4096 - 256)
@@ -878,7 +873,7 @@ class forgeMultiPrompt(scripts.Script):
                 StableDiffusionXL.get_learned_conditioning = forgeMultiPrompt.glc_backup_sdxl
             elif getattr(params.sd_model, 'is_sd3', False):
                 StableDiffusion3.get_learned_conditioning = forgeMultiPrompt.glc_backup_sd3
-            elif not shared.sd_model.is_webui_legacy_model():
+            elif getattr(params.sd_model, 'is_flux', False):
                 Flux.get_learned_conditioning = forgeMultiPrompt.glc_backup_flux
 
             memory_management.text_encoder_device = forgeMultiPrompt.text_encoder_device_backup
@@ -978,4 +973,3 @@ class forgeMultiPrompt(scripts.Script):
             torch.cuda.empty_cache()
 
         return
-
